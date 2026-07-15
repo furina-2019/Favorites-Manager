@@ -1,0 +1,56 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\QIAN\\.ohos\\config\\default_QuickStart_LJXtieXHEAEw6XdSIp7eNmaJemggqghwREmZyiLnAKY=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B181A238DE719178F1B2146091EBF048668402DC114210A3B8FE8C6A92D0AB6E80CCE3BFAB7E4CA",
+          "profile": "C:\\Users\\QIAN\\.ohos\\config\\default_QuickStart_LJXtieXHEAEw6XdSIp7eNmaJemggqghwREmZyiLnAKY=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\QIAN\\.ohos\\config\\default_QuickStart_LJXtieXHEAEw6XdSIp7eNmaJemggqghwREmZyiLnAKY=.p12",
+          "storePassword": "0000001B8734F0A9DE5DA89C932801282EF4EDFEE69DA8928083604DD63633525E658F3552FC5315B6BB0D"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.0.1(21)",
+        "compatibleSdkVersion": "6.0.1(21)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}
