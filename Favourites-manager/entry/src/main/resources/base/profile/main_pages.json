@@ -1,0 +1,10 @@
+{
+  "src": [
+    "pages/MainPage",
+    "pages/FolderDetail",
+    "pages/SaveShare",
+    "pages/WidgetCard",
+    "pages/CreateFavorite",
+    "pages/Settings"
+  ]
+}

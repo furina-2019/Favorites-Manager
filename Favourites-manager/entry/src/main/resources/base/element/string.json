@@ -1,0 +1,36 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "收藏管理模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "收藏管理主入口"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "我的收藏"
+    },
+    {
+      "name": "ShareAbility_desc",
+      "value": "接收分享内容"
+    },
+    {
+      "name": "ShareAbility_label",
+      "value": "保存到收藏"
+    },
+    {
+      "name": "widget_name",
+      "value": "收藏夹"
+    },
+    {
+      "name": "widget_desc",
+      "value": "快速查看最新收藏和猜你想看"
+    },
+    {
+      "name": "start_abilities_reason",
+      "value": "用于启动其他应用打开收藏的链接"
+    }
+  ]
+}
