@@ -4,36 +4,42 @@ from PyQt6.QtGui import QPixmap
 import os
 
 class FolderCard(QWidget):
-    clicked = pyqtSignal(int)  # 发出 folder_id
+    clicked = pyqtSignal(int)
 
-    def __init__(self, folder_id, folder_name, parent=None):
+    def __init__(self, folder_id, folder_name, has_password=False, parent=None):
         super().__init__(parent)
         self.folder_id = folder_id
         self.folder_name = folder_name
+        self.has_password = has_password
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         icon_label = QLabel()
         icon_label.setFixedSize(64, 64)
         icon_label.setStyleSheet("background-color: #e0e0e0; border-radius: 8px;")
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_label.setText("📁")
         layout.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        name_layout = QHBoxLayout()
+        self.lock_label = QLabel("🔒")
+        self.lock_label.setVisible(has_password)
+        name_layout.addWidget(self.lock_label)
+
         name_label = QLabel(folder_name)
         name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         name_label.setWordWrap(True)
-        layout.addWidget(name_label)
+        name_layout.addWidget(name_label)
+        name_layout.addStretch()
+        layout.addLayout(name_layout)
+
         self.setLayout(layout)
         self.setFixedSize(120, 120)
-        self.setStyleSheet("""
-            FolderCard {
-                border: 1px solid #ccc;
-                border-radius: 8px;
-                background-color: #f9f9f9;
-            }
-            FolderCard:hover {
-                background-color: #e0e0e0;
-            }
-        """)
+        self.setStyleSheet("""...""")
+
+    def set_has_password(self, has_password):
+        self.has_password = has_password
+        self.lock_label.setVisible(has_password)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -42,22 +48,21 @@ class FolderCard(QWidget):
             super().mousePressEvent(event)  # 让右键事件继续传递，以便触发右键菜单
 
 class ItemCard(QWidget):
-    """收藏项卡片，支持多选模式下的勾选框"""
-    clicked = pyqtSignal(int)  # 发出 item_id，用于单击跳转
+    clicked = pyqtSignal(int)
 
-    def __init__(self, item_id, title, cover_path, category, parent=None):
+    def __init__(self, item_id, title, cover_path, category, has_password=False, parent=None):
         super().__init__(parent)
         self.item_id = item_id
         self.category = category
+        self.has_password = has_password
         self.is_selected = False
         self.multi_select_mode = False
 
-        # 主布局：垂直
         layout = QVBoxLayout()
         layout.setSpacing(4)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        # 顶部横条：勾选框 + 弹簧
+        # 顶部勾选框
         top_layout = QHBoxLayout()
         self.checkbox = QCheckBox()
         self.checkbox.setVisible(False)
@@ -66,7 +71,7 @@ class ItemCard(QWidget):
         top_layout.addStretch()
         layout.addLayout(top_layout)
 
-        # 封面图片
+        # 封面
         self.cover_label = QLabel()
         self.cover_label.setFixedSize(200, 150)
         self.cover_label.setStyleSheet("background-color: #ddd; border-radius: 8px;")
@@ -78,25 +83,27 @@ class ItemCard(QWidget):
             self.cover_label.setText("📷")
         layout.addWidget(self.cover_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # 标题
+        # 标题行（锁 + 标题）
+        title_layout = QHBoxLayout()
+        self.lock_label = QLabel("🔒")
+        self.lock_label.setVisible(has_password)
+        title_layout.addWidget(self.lock_label)
+
         self.title_label = QLabel(title)
         self.title_label.setWordWrap(True)
         self.title_label.setMaximumWidth(200)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.title_label)
+        title_layout.addWidget(self.title_label)
+        title_layout.addStretch()
+        layout.addLayout(title_layout)
 
         self.setLayout(layout)
         self.setFixedSize(210, 200)
-        self.setStyleSheet("""
-            ItemCard {
-                border: 1px solid #ccc;
-                border-radius: 8px;
-                background-color: white;
-            }
-            ItemCard:hover {
-                background-color: #f5f5f5;
-            }
-        """)
+        self.setStyleSheet("""...""")
+
+    def set_has_password(self, has_password):
+        self.has_password = has_password
+        self.lock_label.setVisible(has_password)
 
     def on_check_state_changed(self, state):
         self.is_selected = (state == Qt.CheckState.Checked)

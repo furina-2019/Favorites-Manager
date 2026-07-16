@@ -5,6 +5,9 @@ import subprocess
 import sqlite3
 import sys
 import json
+import hashlib
+import requests
+from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
 from PyQt6.QtWidgets import (
@@ -14,7 +17,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QCheckBox, QColorDialog,
     QFrame
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QTimer, QRect,QParallelAnimationGroup
+from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QTimer, QRect,QParallelAnimationGroup, QThread
 from PyQt6.QtGui import QIcon, QPixmap, QAction, QDragEnterEvent, QDropEvent, QColor
 
 from database import Database
@@ -57,11 +60,135 @@ class DropArea(QLabel):
         self.setStyleSheet("border: 2px dashed #aaa; background-color: #f0f0f0;")
         event.acceptProposedAction()
 
+class FetchThread(QThread):
+    finished = pyqtSignal(dict)  # 返回 {'title': str, 'category': str}
+    error = pyqtSignal(str)
+
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+
+    def run(self):
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36'
+            }
+            # 允许重定向
+            resp = requests.get(self.url, timeout=8, headers=headers, allow_redirects=True)
+            resp.encoding = resp.apparent_encoding or 'utf-8'
+            soup = BeautifulSoup(resp.text, 'html.parser')
+
+            # 1. 提取标题：优先 og:title
+            title = None
+            og_title = soup.find('meta', property='og:title')
+            if og_title and og_title.get('content'):
+                title = og_title['content'].strip()
+            else:
+                title_tag = soup.find('title')
+                if title_tag:
+                    title = title_tag.get_text().strip()
+            if not title:
+                title = self.url
+
+            # 2. 自动识别类别
+            category = self.extract_category(soup, self.url)
+
+            self.finished.emit({'title': title, 'category': category})
+        except Exception as e:
+            self.error.emit(str(e))
+
+    def extract_category(self, soup, url):
+        domain_map = {
+            'github.com': 'programming',
+            'stackoverflow.com': 'programming',
+            'csdn.net': 'programming',
+            'zhihu.com': 'qa',
+            'bilibili.com': 'video',
+            'youtube.com': 'video',
+            'douyin.com': 'video',
+            'weibo.com': 'social',
+            'twitter.com': 'social',
+            'cnblogs.com': 'blog',
+            'jianshu.com': 'writing',
+            'wikipedia.org': 'wiki',
+            'baidu.com': 'search',
+            'google.com': 'search',
+            'bing.com': 'search',
+            'taobao.com': 'shopping',
+            'jd.com': 'shopping',
+            'amazon.com': 'shopping',
+            'netflix.com': 'movie',
+            'iqiyi.com': 'movie',
+            'youku.com': 'movie',
+            'douban.com': 'movie',
+            'qq.com': 'portal',
+            'sina.com.cn': 'portal',
+            '163.com': 'portal',
+            'sohu.com': 'portal',
+            'ifeng.com': 'news',
+            'xinhuanet.com': 'news',
+            'people.com.cn': 'news',
+        }
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        if domain.startswith('www.'):
+            domain = domain[4:]
+        # 优先域名映射
+        for key, cat_key in domain_map.items():
+            if key in domain:
+                return cat_key
+        # 尝试从 meta keywords 获取
+        meta_keywords = soup.find('meta', attrs={'name': 'keywords'})
+        if meta_keywords and meta_keywords.get('content'):
+            keywords = meta_keywords['content'].split(',')
+            if keywords:
+                first_keyword = keywords[0].strip().lower()
+                # 如果包含常见类别词，尝试映射
+                for key, cat in domain_map.items():
+                    if key in first_keyword or first_keyword in key:
+                        return cat
+                # 否则返回第一个关键词（但可能不是标准键，会显示原文）
+                return first_keyword
+        return 'uncategorized'
+
 
 class MainWindow(QMainWindow):
     # 类变量保存当前主题色和显示模式
     current_theme_color = QColor("#0078d7")   # 默认蓝色
     current_dark_mode = False
+    category_translations = {
+        "zh": {
+            "programming": "编程",
+            "qa": "问答",
+            "video": "视频",
+            "social": "社交",
+            "blog": "博客",
+            "writing": "写作",
+            "wiki": "百科",
+            "search": "搜索",
+            "shopping": "购物",
+            "movie": "影视",
+            "portal": "门户",
+            "news": "新闻",
+            "uncategorized": "未分类"
+        },
+        "en": {
+            "programming": "Programming",
+            "qa": "Q&A",
+            "video": "Video",
+            "social": "Social",
+            "blog": "Blog",
+            "writing": "Writing",
+            "wiki": "Wiki",
+            "search": "Search",
+            "shopping": "Shopping",
+            "movie": "Movie",
+            "portal": "Portal",
+            "news": "News",
+            "uncategorized": "Uncategorized"
+        }
+    }
 
     def __init__(self):
         super().__init__()
@@ -69,13 +196,17 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
         self.anim_group = None
         self.db = Database()
+        # 属性
+        self.password_overlay = None
+        self.password_sidebar = None
+        self.password_anim = None
+        self.password_callback = None  # 用于输入模式验证后的回调
+        self.password_target_type = None
+        self.password_target_id = None
 
         # 翻译
-        self.current_lang = "zh"  # 默认中文
-        # 加载保存的语言偏好
-        saved_lang = self.load_language_preference()
-        if saved_lang:
-            self.current_lang = saved_lang
+        config = self.load_config()
+        self.current_lang = config.get("language", "zh")
         self.strings = {
             "zh": {
                 "window_title": "收藏管理器",
@@ -92,7 +223,7 @@ class MainWindow(QMainWindow):
                 "theme_color": "主题色",
                 "select_color": "选择颜色",
                 "about_title": "← 关于",
-                "version": "版本: v0.0.2-beta",
+                "version": "版本: v0.0.3-beta",
                 "open_source": "开源地址",
                 "language_title": "语言",
                 "chinese": "简体中文",
@@ -154,6 +285,23 @@ class MainWindow(QMainWindow):
                 "title_placeholder": "标题（可选）",
                 "category_placeholder": "类别",
                 "file_title_placeholder": "自动填充，可修改",
+                "set_password": "设置密码",
+                "change_password": "更改密码",
+                "remove_password": "取消密码",
+                "input_password": "输入密码",
+                "new_password": "新密码",
+                "confirm_new_password": "确认新密码",
+                "old_password": "原密码",
+                "enter_old_password": "请输入原密码",
+                "enter_password": "请输入密码",
+                "password_cannot_be_empty": "密码不能为空",
+                "passwords_do_not_match": "两次密码输入不一致",
+                "old_password_incorrect": "原密码错误",
+                "password_incorrect": "密码错误，请重试",
+                "back": "← 返回",
+                "fetching": "获取中...",
+                "auto_fetch_success": "已获取标题：{0}\n自动识别类别：{1}",
+                "uncategorized": "未分类"
             },
             "en": {
                "window_title": "Favorites Manager",
@@ -170,7 +318,7 @@ class MainWindow(QMainWindow):
                 "theme_color": "Theme Color",
                 "select_color": "Choose Color",
                 "about_title": "← About",
-                "version": "Version: v0.0.2-beta",
+                "version": "Version: v0.0.3-beta",
                 "open_source": "Open Source",
                 "language_title": "Language",
                 "chinese": "Simplified Chinese",
@@ -232,8 +380,30 @@ class MainWindow(QMainWindow):
                 "title_placeholder": "Title (optional)",
                 "category_placeholder": "Category",
                 "file_title_placeholder": "Auto-filled, editable",
+                "set_password": "Set Password",
+                "change_password": "Change Password",
+                "remove_password": "Remove Password",
+                "input_password": "Enter Password",
+                "new_password": "New Password",
+                "confirm_new_password": "Confirm New Password",
+                "old_password": "Old Password",
+                "enter_old_password": "Enter Old Password",
+                "enter_password": "Enter Password",
+                "password_cannot_be_empty": "Password cannot be empty",
+                "passwords_do_not_match": "Passwords do not match",
+                "old_password_incorrect": "Old password incorrect",
+                "password_incorrect": "Password incorrect, please try again",
+                "back": "← back",
+                "fetching": "Fetching...",
+                "auto_fetch_success": "Fetched title: {0}\nAuto-detected category: {1}",
+                "uncategorized": "Uncategorized"
             }
         }
+
+        # 设置主题色和暗黑模式
+        color_str = config.get("theme_color", "#0078d7")
+        MainWindow.current_theme_color = QColor(color_str)
+        MainWindow.current_dark_mode = config.get("dark_mode", False)
 
         # 中心控件: 使用 QStackedWidget 实现横推动画切换
         self.stacked_widget = QStackedWidget()
@@ -271,27 +441,24 @@ class MainWindow(QMainWindow):
 
         self.apply_language()
 
-    def load_language_preference(self):
-        """从配置文件加载语言偏好"""
+    def load_config(self):
+        """加载配置文件，返回包含 language, theme_color, dark_mode 的字典"""
         config_path = "config.json"
+        default_config = {
+            "language": "zh",
+            "theme_color": "#0078d7",
+            "dark_mode": False
+        }
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                lang = data.get("language")
-                if lang in ("zh", "en"):
-                    return lang
+                # 合并默认值，保证所有字段存在
+                for key in default_config:
+                    if key not in data:
+                        data[key] = default_config[key]
+                return data
         except (FileNotFoundError, json.JSONDecodeError):
-            pass
-        return None
-
-    def save_language_preference(self, lang):
-        """保存语言偏好到配置文件"""
-        config_path = "config.json"
-        try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump({"language": lang}, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+            return default_config
 
     # ---------- 设置侧边栏相关方法 ----------
     def open_settings(self):
@@ -563,17 +730,18 @@ class MainWindow(QMainWindow):
 
     # ---------- 设置功能响应 ----------
     def on_mode_changed(self, index):
-        """显示模式切换"""
-        dark_mode = (index == 1)  # 1: 深色
+        dark_mode = (index == 1)
         MainWindow.current_dark_mode = dark_mode
         self.apply_theme()
+        self.save_config()
 
     def on_color_picker_clicked(self):
-        """弹出颜色选择对话框"""
-        color = QColorDialog.getColor(MainWindow.current_theme_color, self, self.strings[self.current_lang]["select_theme_color"])
+        color = QColorDialog.getColor(MainWindow.current_theme_color, self,
+                                      self.strings[self.current_lang]["select_theme_color"])
         if color.isValid():
             MainWindow.current_theme_color = color
             self.apply_theme()
+            self.save_config()
             # 更新侧边栏中的颜色预览
             for sidebar in self.settings_sidebars:
                 for child in sidebar.findChildren(QLabel):
@@ -708,6 +876,61 @@ class MainWindow(QMainWindow):
                 for label in sidebar.findChildren(QLabel):
                     if label.property("color_preview"):
                         label.setStyleSheet(f"background-color: {color_str}; border: 1px solid {border_color};")
+        # 密码侧边栏
+        if self.password_sidebar:
+            # 复制侧边栏样式
+            sidebar_style = f"""
+                QWidget {{
+                    background-color: {alt_bg};
+                    color: {text_color};
+                    border-right: 1px solid {border_color};
+                }}
+                QPushButton {{
+                    text-align: left;
+                    padding: 8px 16px;
+                    border: none;
+                    background-color: transparent;
+                    color: {text_color};
+                    font-size: 14px;
+                }}
+                QPushButton:hover {{
+                    background-color: {hover_bg};
+                }}
+                QLabel {{
+                    color: {text_color};
+                }}
+                QLineEdit {{
+                    border: 1px solid {border_color};
+                    border-radius: 4px;
+                    padding: 6px;
+                    background-color: {bg_color};
+                    color: {text_color};
+                }}
+                QLineEdit:focus {{
+                    border-bottom: 3px solid {color_str};
+                }}
+                QPushButton#confirm_btn {{
+                    background-color: {color_str};
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 8px;
+                }}
+            """
+            self.password_sidebar.setStyleSheet(sidebar_style)
+
+    def save_config(self):
+        config_path = "config.json"
+        data = {
+            "language": self.current_lang,
+            "theme_color": MainWindow.current_theme_color.name(),
+            "dark_mode": MainWindow.current_dark_mode
+        }
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     def on_language_settings_clicked(self):
         self.toggle_sub_sidebar("language")
@@ -756,8 +979,8 @@ class MainWindow(QMainWindow):
             return
         self.current_lang = lang
         self.apply_language()
-        self.save_language_preference(lang)
-        self.close_all_settings()  # 切换后关闭设置侧边栏
+        self.save_config()
+        self.close_all_settings()
 
     def apply_language(self):
         # 更新窗口标题
@@ -824,9 +1047,8 @@ class MainWindow(QMainWindow):
             confirm_btn.setText(self.strings[self.current_lang]["confirm"])
 
         # 更新自动识别按钮
-        auto_btn = self.findChild(QPushButton, "auto_fetch_btn")
-        if auto_btn:
-            auto_btn.setText(self.strings[self.current_lang]["auto_fetch"])
+        if hasattr(self, 'auto_fetch_btn'):
+            self.auto_fetch_btn.setText(self.strings[self.current_lang]["auto_fetch"])
 
         # 更新拖拽区域的提示文字（若未选择文件则显示提示，否则保留已选文件名）
         if hasattr(self, 'drop_area'):
@@ -897,8 +1119,9 @@ class MainWindow(QMainWindow):
                 widget.deleteLater()
         folders = self.db.get_folders()
         row, col = 0, 0
-        for folder_id, name in folders:
-            card = FolderCard(folder_id, name)
+        for folder_id, name, pwd_hash in folders:
+            has_password = pwd_hash is not None
+            card = FolderCard(folder_id, name, has_password)
             card.clicked.connect(lambda fid=folder_id: self.open_folder(fid, name))
             card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             card.customContextMenuRequested.connect(lambda pos, fid=folder_id, n=name: self.show_folder_context_menu(pos, fid, n))
@@ -922,19 +1145,45 @@ class MainWindow(QMainWindow):
             self.load_folders()
 
     def open_folder(self, folder_id, folder_name):
+        pwd_hash = self.db.get_folder_password_hash(folder_id)
+        if pwd_hash is not None:
+            self.show_password_input('folder', folder_id,
+                                     lambda: self._open_folder_after_verify(folder_id, folder_name))
+        else:
+            self._open_folder_after_verify(folder_id, folder_name)
+
+    def _open_folder_after_verify(self, folder_id, folder_name):
         self.current_folder_id = folder_id
         self.current_folder_name = folder_name
         self.load_items_in_folder(folder_id)
         self.switch_to_page(1)
 
     def show_folder_context_menu(self, pos, folder_id, folder_name):
+        card = self.sender()
+        has_password = card.has_password if hasattr(card, 'has_password') else False
+
         menu = QMenu(self)
         rename_action = QAction(self.strings[self.current_lang]["rename"], self)
         rename_action.triggered.connect(lambda: self.rename_folder(folder_id, folder_name))
+        menu.addAction(rename_action)
+
+        if has_password:
+            change_pwd_action = QAction(self.strings[self.current_lang]["change_password"], self)
+            change_pwd_action.triggered.connect(lambda: self.open_password_change('folder', folder_id))
+            menu.addAction(change_pwd_action)
+
+            remove_pwd_action = QAction(self.strings[self.current_lang]["remove_password"], self)
+            remove_pwd_action.triggered.connect(lambda: self.open_password_remove('folder', folder_id))
+            menu.addAction(remove_pwd_action)
+        else:
+            set_pwd_action = QAction(self.strings[self.current_lang]["set_password"], self)
+            set_pwd_action.triggered.connect(lambda: self.open_password_setup('folder', folder_id))
+            menu.addAction(set_pwd_action)
+
         delete_action = QAction(self.strings[self.current_lang]["delete"], self)
         delete_action.triggered.connect(lambda: self.delete_folder(folder_id))
-        menu.addAction(rename_action)
         menu.addAction(delete_action)
+
         menu.exec(self.sender().mapToGlobal(pos))
 
     def rename_folder(self, folder_id, old_name):
@@ -1004,18 +1253,21 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.multi_select_bar)
 
     def load_items_in_folder(self, folder_id):
+        # 清空原有卡片
         for i in reversed(range(self.items_grid_layout.count())):
             widget = self.items_grid_layout.itemAt(i).widget()
             if widget:
                 widget.deleteLater()
         items = self.db.get_items_by_folder(folder_id)
         row, col = 0, 0
-        for item_id, item_type, title, url, category, cover_path in items:
-            card = ItemCard(item_id, title, cover_path, category)
-            card.clicked.connect(lambda _, url=url, itype=item_type: self.open_item(url, itype))
+        for item_id, item_type, title, url, category, cover_path, pwd_hash in items:
+            has_password = pwd_hash is not None
+            card = ItemCard(item_id, title, cover_path, category, has_password)
+            card.clicked.connect(lambda _, iid=item_id: self.open_item_by_id(iid))
             card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            card.customContextMenuRequested.connect(lambda pos, iid=item_id, t=title, u=url, cat=category, itype=item_type:
-                                                     self.show_item_context_menu(pos, iid, t, u, cat, itype))
+            card.customContextMenuRequested.connect(
+                lambda pos, iid=item_id, t=title, u=url, cat=category, itype=item_type:
+                self.show_item_context_menu(pos, iid, t, u, cat, itype))
             self.items_grid_layout.addWidget(card, row, col)
             col += 1
             if col >= 4:
@@ -1024,8 +1276,8 @@ class MainWindow(QMainWindow):
         if self.multi_select_mode:
             self.exit_multi_select_mode()
         self.filter_by_category(self.current_category_filter)
-
-    def open_item(self, url, item_type):
+        
+    def open_item(self, url, item_type, item_id=None):
         self.exit_multi_select_mode()
         if item_type == "link":
             url = self.extract_url_from_text(url)
@@ -1038,21 +1290,69 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.warning(self, self.strings[self.current_lang]["file_not_found"], fself.strings[self.current_lang]["file_not_found_msg"].format(url))
 
+    def open_item_by_id(self, item_id):
+        # 从数据库获取该条目的信息（需要新增方法 get_item_by_id）
+        item = self.db.get_item_by_id(item_id)  # 返回 (item_type, title, url, category, cover_path, password_hash)
+        if item is None:
+            return
+        item_type, title, url, category, cover_path, pwd_hash = item
+        if pwd_hash is not None:
+            self.show_password_input('item', item_id,
+                                     lambda: self._open_item_after_verify(url, item_type))
+        else:
+            self._open_item_after_verify(url, item_type)
+
+    def _open_item_after_verify(self, url, item_type):
+        # 原来的 open_item 逻辑
+        if item_type == "link":
+            url = self.extract_url_from_text(url)
+            if not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+            webbrowser.open(url)
+        else:
+            if os.path.exists(url):
+                os.startfile(url)
+            else:
+                QMessageBox.warning(self, self.strings[self.current_lang]["file_not_found"],
+                                    self.strings[self.current_lang]["file_not_found_msg"].format(url))
+
     def extract_url_from_text(self, text):
         pattern = r'https?://[^\s<>"\'{}|\\^`\[\]]+'
         match = re.search(pattern, text)
         return match.group(0) if match else text.strip()
 
     def show_item_context_menu(self, pos, item_id, title, url, category, item_type):
+        card = self.sender()
+        has_password = card.has_password if hasattr(card, 'has_password') else False
         menu = QMenu(self)
         edit_action = QAction(self.strings[self.current_lang]["edit"], self)
         edit_action.triggered.connect(lambda: self.edit_item(item_id, title, url, category, item_type))
         delete_action = QAction(self.strings[self.current_lang]["delete"], self)
         delete_action.triggered.connect(lambda: self.delete_item(item_id))
+
+        if has_password:
+            change_pwd_action = QAction(self.strings[self.current_lang]["change_password"], self)
+            change_pwd_action.triggered.connect(lambda: self.open_password_change('item', item_id))
+            menu.addAction(change_pwd_action)
+
+            remove_pwd_action = QAction(self.strings[self.current_lang]["remove_password"], self)
+            remove_pwd_action.triggered.connect(lambda: self.open_password_remove('item', item_id))
+            menu.addAction(remove_pwd_action)
+        else:
+            set_pwd_action = QAction(self.strings[self.current_lang]["set_password"], self)
+            set_pwd_action.triggered.connect(lambda: self.open_password_setup('item', item_id))
+            menu.addAction(set_pwd_action)
+
         multi_action = QAction(self.strings[self.current_lang]["multi_select_mode"], self)
         multi_action.triggered.connect(self.enable_multi_select_mode)
         menu.addAction(edit_action)
         menu.addAction(delete_action)
+        # 插入密码选项
+        if has_password:
+            menu.addAction(change_pwd_action)
+            menu.addAction(remove_pwd_action)
+        else:
+            menu.addAction(set_pwd_action)
         menu.addSeparator()
         menu.addAction(multi_action)
         menu.exec(self.sender().mapToGlobal(pos))
@@ -1229,6 +1529,7 @@ class MainWindow(QMainWindow):
         auto_btn = QPushButton(self.strings[self.current_lang]["auto_fetch"])
         auto_btn.setObjectName("auto_fetch_btn")
         auto_btn.clicked.connect(self.auto_fetch_link_info)
+        self.auto_fetch_btn = auto_btn  # 保存为实例属性
         label = QLabel(self.strings[self.current_lang]["link_url"])
         label.setObjectName("label_link_url")
         link_layout.addWidget(label)
@@ -1309,14 +1610,16 @@ class MainWindow(QMainWindow):
             if isinstance(card, ItemCard) and card.checkbox.isChecked():
                 selected_ids.append(card.item_id)
         if not selected_ids:
-            QMessageBox.information(self, self.strings[self.current_lang]["info"], self.strings[self.current_lang]["no_item_selected"])
+            QMessageBox.information(self, self.strings[self.current_lang]["info"],
+                                    self.strings[self.current_lang]["no_item_selected"])
             return
-        reply = QMessageBox.question(self, self.strings[self.current_lang]["confirm_delete"], fself.strings[self.current_lang]["batch_delete_confirm"].format(len(selected_ids)),
+        reply = QMessageBox.question(self, self.strings[self.current_lang]["confirm_delete"],
+                                     self.strings[self.current_lang]["batch_delete_confirm"].format(len(selected_ids)),
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
+            self.exit_multi_select_mode()
             self.db.delete_items_by_ids(selected_ids)
             self.load_items_in_folder(self.current_folder_id)
-            self.exit_multi_select_mode()
 
     def switch_add_item_type(self, index):
         self.add_item_stack.setCurrentIndex(index)
@@ -1337,13 +1640,43 @@ class MainWindow(QMainWindow):
     def auto_fetch_link_info(self):
         url = self.link_url_edit.text().strip()
         if not url:
+            QMessageBox.warning(self, self.strings[self.current_lang]["warning"],
+                                self.strings[self.current_lang]["warning_empty_link"])
             return
-        import re
-        match = re.search(r'https?://([^/]+)', url)
-        if match:
-            title = match.group(1)
+        url = self.extract_url_from_text(url)
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+
+        self.auto_fetch_btn.setEnabled(False)
+        self.auto_fetch_btn.setText(self.strings[self.current_lang]["fetching"])
+
+        self.fetch_thread = FetchThread(url)
+        self.fetch_thread.finished.connect(self.on_fetch_finished)
+        self.fetch_thread.error.connect(self.on_fetch_error)
+        self.fetch_thread.start()
+
+    def on_fetch_finished(self, result):
+        title = result.get('title', '')
+        category_key = result.get('category', 'uncategorized')
+        # 翻译类别
+        category_display = self.category_translations[self.current_lang].get(category_key, category_key)
+        if title:
             self.link_title_edit.setText(title)
-        QMessageBox.information(self, self.strings[self.current_lang]["info"], self.strings[self.current_lang]["auto_fetch_complete"])
+        if category_display:
+            self.link_category_edit.setText(category_display)
+        self.auto_fetch_btn.setEnabled(True)
+        self.auto_fetch_btn.setText(self.strings[self.current_lang]["auto_fetch"])
+        QMessageBox.information(
+            self,
+            self.strings[self.current_lang]["info"],
+            self.strings[self.current_lang]["auto_fetch_success"].format(title, category_display)
+        )
+
+    def on_fetch_error(self, error_msg):
+        self.auto_fetch_btn.setEnabled(True)
+        self.auto_fetch_btn.setText(self.strings[self.current_lang]["auto_fetch"])
+        QMessageBox.warning(self, self.strings[self.current_lang]["warning"],
+                            f"获取失败：{error_msg}\n请检查网络或链接是否正确。")
 
     def add_item_confirm(self):
         if self.current_folder_id is None:
@@ -1418,3 +1751,263 @@ class MainWindow(QMainWindow):
             main_menu = self.settings_sidebars[0]
             main_menu.move(self.width() - main_menu.width(), 0)
         super().resizeEvent(event)
+        if self.password_overlay:
+            self.password_overlay.setGeometry(0, 0, self.width(), self.height())
+        if self.password_sidebar:
+            # 如果侧边栏已显示，更新其高度（宽度固定）
+            self.password_sidebar.setFixedHeight(self.height())
+            # 确保其左侧位置正确（0）
+            self.password_sidebar.move(0, 0)
+
+    def _create_password_sidebar(self, mode, target_type, target_id, callback=None):
+        """
+        mode: 'setup', 'change', 'remove', 'input'
+        target_type: 'folder' or 'item'
+        target_id: 对应的 id
+        callback: 仅 input 模式使用，验证成功后调用
+        """
+        sidebar = QWidget(self)
+        sidebar.setFixedWidth(300)
+        sidebar.setStyleSheet("background-color: #f5f5f5; border-right: 1px solid #ccc;")
+
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        # 返回按钮
+        back_btn = QPushButton(self.strings[self.current_lang]["back"])
+        back_btn.clicked.connect(self.close_password_sidebar)
+        layout.addWidget(back_btn)
+
+        # 标题
+        title = QLabel()
+        if mode == 'setup':
+            title.setText(self.strings[self.current_lang]["set_password"])
+        elif mode == 'change':
+            title.setText(self.strings[self.current_lang]["change_password"])
+        elif mode == 'remove':
+            title.setText(self.strings[self.current_lang]["remove_password"])
+        elif mode == 'input':
+            title.setText(self.strings[self.current_lang]["input_password"])
+        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(title)
+
+        # 错误提示
+        self.password_error_label = QLabel()
+        self.password_error_label.setStyleSheet("color: red;")
+        self.password_error_label.setVisible(False)
+        layout.addWidget(self.password_error_label)
+
+        # 根据模式动态添加输入框
+        self.password_inputs = []  # 存储所有 QLineEdit
+        if mode == 'setup':
+            layout.addWidget(QLabel(self.strings[self.current_lang]["new_password"] + ":"))
+            pwd1 = QLineEdit();
+            pwd1.setEchoMode(QLineEdit.EchoMode.Password)
+            layout.addWidget(pwd1)
+            layout.addWidget(QLabel(self.strings[self.current_lang]["confirm_new_password"] + ":"))
+            pwd2 = QLineEdit();
+            pwd2.setEchoMode(QLineEdit.EchoMode.Password)
+            layout.addWidget(pwd2)
+            self.password_inputs = [pwd1, pwd2]
+        elif mode == 'change':
+            layout.addWidget(QLabel(self.strings[self.current_lang]["old_password"] + ":"))
+            old_pwd = QLineEdit();
+            old_pwd.setEchoMode(QLineEdit.EchoMode.Password)
+            layout.addWidget(old_pwd)
+            layout.addWidget(QLabel(self.strings[self.current_lang]["new_password"] + ":"))
+            new_pwd1 = QLineEdit();
+            new_pwd1.setEchoMode(QLineEdit.EchoMode.Password)
+            layout.addWidget(new_pwd1)
+            layout.addWidget(QLabel(self.strings[self.current_lang]["confirm_new_password"] + ":"))
+            new_pwd2 = QLineEdit();
+            new_pwd2.setEchoMode(QLineEdit.EchoMode.Password)
+            layout.addWidget(new_pwd2)
+            self.password_inputs = [old_pwd, new_pwd1, new_pwd2]
+        elif mode == 'remove':
+            layout.addWidget(QLabel(self.strings[self.current_lang]["enter_old_password"] + ":"))
+            pwd = QLineEdit();
+            pwd.setEchoMode(QLineEdit.EchoMode.Password)
+            layout.addWidget(pwd)
+            self.password_inputs = [pwd]
+        elif mode == 'input':
+            layout.addWidget(QLabel(self.strings[self.current_lang]["enter_password"] + ":"))
+            pwd = QLineEdit();
+            pwd.setEchoMode(QLineEdit.EchoMode.Password)
+            layout.addWidget(pwd)
+            self.password_inputs = [pwd]
+
+        # 确认按钮
+        confirm_btn = QPushButton(self.strings[self.current_lang]["confirm"])
+        confirm_btn.setObjectName("confirm_btn")  # 添加这一行
+        confirm_btn.clicked.connect(lambda: self._on_password_confirm(mode, target_type, target_id, callback))
+        layout.addWidget(confirm_btn)
+
+        layout.addStretch()
+        return sidebar
+
+    def _on_password_confirm(self, mode, target_type, target_id, callback):
+        # 获取所有输入框的内容
+        inputs = [edit.text().strip() for edit in self.password_inputs]
+        # 根据模式验证
+        if mode == 'setup':
+            if len(inputs) != 2:
+                return
+            if not inputs[0] or not inputs[1]:
+                self._show_password_error(self.strings[self.current_lang]["password_cannot_be_empty"])
+                return
+            if inputs[0] != inputs[1]:
+                self._show_password_error(self.strings[self.current_lang]["passwords_do_not_match"])
+                return
+            # 设置密码
+            if target_type == 'folder':
+                self.db.set_folder_password(target_id, inputs[0])
+            else:
+                self.db.set_item_password(target_id, inputs[0])
+            self._close_password_sidebar_and_refresh()
+        elif mode == 'change':
+            if len(inputs) != 3:
+                return
+            old, new1, new2 = inputs
+            # 验证原密码
+            if target_type == 'folder':
+                if not self.db.verify_folder_password(target_id, old):
+                    self._show_password_error(self.strings[self.current_lang]["old_password_incorrect"])
+                    return
+                self.db.set_folder_password(target_id, new1)
+            else:
+                if not self.db.verify_item_password(target_id, old):
+                    self._show_password_error(self.strings[self.current_lang]["old_password_incorrect"])
+                    return
+                self.db.set_item_password(target_id, new1)
+            if not new1 or not new2:
+                self._show_password_error(self.strings[self.current_lang]["password_cannot_be_empty"])
+                return
+            if new1 != new2:
+                self._show_password_error(self.strings[self.current_lang]["passwords_do_not_match"])
+                return
+            # 更新密码
+            if target_type == 'folder':
+                self.db.set_folder_password(target_id, new1)
+            else:
+                self.db.set_item_password(target_id, new1)
+            self._close_password_sidebar_and_refresh()
+        elif mode == 'remove':
+            if len(inputs) != 1:
+                return
+            pwd = inputs[0]
+            if target_type == 'folder':
+                if not self.db.verify_folder_password(target_id, pwd):
+                    self._show_password_error(self.strings[self.current_lang]["password_incorrect"])
+                    return
+                self.db.remove_folder_password(target_id)
+            else:
+                if not self.db.verify_item_password(target_id, pwd):
+                    self._show_password_error(self.strings[self.current_lang]["password_incorrect"])
+                    return
+                self.db.remove_item_password(target_id)
+            self._close_password_sidebar_and_refresh()
+        elif mode == 'input':
+            if len(inputs) != 1:
+                return
+            pwd = inputs[0]
+            valid = False
+            if target_type == 'folder':
+                valid = self.db.verify_folder_password(target_id, pwd)
+            else:
+                valid = self.db.verify_item_password(target_id, pwd)
+            if valid:
+                self.close_password_sidebar()
+                if callback:
+                    callback()
+            else:
+                self._show_password_error(self.strings[self.current_lang]["password_incorrect"])
+
+    def _show_password_error(self, msg):
+        self.password_error_label.setText(msg)
+        self.password_error_label.setVisible(True)
+
+    def _close_password_sidebar_and_refresh(self):
+        self.close_password_sidebar()
+        # 刷新当前视图以更新锁图标
+        self.refresh_current_view()
+
+    def refresh_current_view(self):
+        index = self.stacked_widget.currentIndex()
+        if index == 0:
+            self.load_folders()
+        elif index == 1 and self.current_folder_id is not None:
+            self.load_items_in_folder(self.current_folder_id)
+
+    def open_password_setup(self, target_type, target_id):
+        self._show_password_sidebar('setup', target_type, target_id)
+
+    def open_password_change(self, target_type, target_id):
+        self._show_password_sidebar('change', target_type, target_id)
+
+    def open_password_remove(self, target_type, target_id):
+        self._show_password_sidebar('remove', target_type, target_id)
+
+    def show_password_input(self, target_type, target_id, callback):
+        self._show_password_sidebar('input', target_type, target_id, callback)
+
+    def _show_password_sidebar(self, mode, target_type, target_id, callback=None):
+        # 如果已有侧边栏，先关闭
+        self.close_password_sidebar()
+
+        # 遮罩
+        self.password_overlay = QWidget(self)
+        self.password_overlay.setGeometry(0, 0, self.width(), self.height())
+        self.password_overlay.setStyleSheet("background-color: rgba(0,0,0,0.3);")
+        self.password_overlay.mousePressEvent = lambda e: self.close_password_sidebar()
+        self.password_overlay.raise_()
+        self.password_overlay.show()
+
+        # 侧边栏
+        sidebar = self._create_password_sidebar(mode, target_type, target_id, callback)
+        sidebar.setParent(self)
+        width = sidebar.width()
+        height = self.height()
+        # 初始位置：完全在左侧外
+        sidebar.setGeometry(-width, 0, width, height)
+        sidebar.raise_()
+        sidebar.show()
+
+        self.password_sidebar = sidebar
+
+        # 动画滑入
+        anim = QPropertyAnimation(sidebar, b"geometry")
+        anim.setDuration(300)
+        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        anim.setStartValue(sidebar.geometry())
+        anim.setEndValue(QRect(0, 0, width, height))
+        anim.start()
+        self.password_anim = anim
+
+        self.apply_theme()
+
+    def close_password_sidebar(self):
+        if self.password_sidebar is None:
+            return
+        sidebar = self.password_sidebar
+        width = sidebar.width()
+        anim = QPropertyAnimation(sidebar, b"geometry")
+        anim.setDuration(300)
+        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        anim.setStartValue(sidebar.geometry())
+        anim.setEndValue(QRect(-width, 0, width, self.height()))
+        anim.finished.connect(self._cleanup_password_sidebar)
+        anim.start()
+        self.password_anim = anim
+
+    def _cleanup_password_sidebar(self):
+        if self.password_sidebar:
+            self.password_sidebar.deleteLater()
+            self.password_sidebar = None
+        if self.password_overlay:
+            self.password_overlay.deleteLater()
+            self.password_overlay = None
+        if self.password_anim:
+            self.password_anim = None
+        self.password_error_label = None
+        self.password_inputs = []

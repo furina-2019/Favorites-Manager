@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import hashlib
 
 class Database:
     def __init__(self, db_path="user_data.db"):
@@ -31,6 +32,15 @@ class Database:
                     FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE
                 )
             ''')
+            cursor.execute("PRAGMA table_info(folders)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'password_hash' not in columns:
+                cursor.execute("ALTER TABLE folders ADD COLUMN password_hash TEXT")
+
+            cursor.execute("PRAGMA table_info(items)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'password_hash' not in columns:
+                cursor.execute("ALTER TABLE items ADD COLUMN password_hash TEXT")
             conn.commit()
 
     def add_folder(self, name):
@@ -43,7 +53,7 @@ class Database:
     def get_folders(self):
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name FROM folders ORDER BY created_at DESC")
+            cursor.execute("SELECT id, name, password_hash FROM folders ORDER BY created_at DESC")
             return cursor.fetchall()
 
     def add_item(self, folder_id, item_type, title, url_or_path, category, cover_path):
@@ -59,7 +69,9 @@ class Database:
     def get_items_by_folder(self, folder_id):
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, item_type, title, url, category, cover_path FROM items WHERE folder_id = ?", (folder_id,))
+            cursor.execute(
+                "SELECT id, item_type, title, url, category, cover_path, password_hash FROM items WHERE folder_id = ?",
+                (folder_id,))
             return cursor.fetchall()
 
     def rename_folder(self, folder_id, new_name):
@@ -99,3 +111,68 @@ class Database:
             cursor = conn.cursor()
             cursor.execute(f"DELETE FROM items WHERE id IN ({placeholders})", item_ids)
             conn.commit()
+
+    import hashlib
+
+    def _hash_password(self, password):
+        return hashlib.sha256(password.encode()).hexdigest()
+
+    def set_folder_password(self, folder_id, password):
+        hash_ = self._hash_password(password)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE folders SET password_hash = ? WHERE id = ?", (hash_, folder_id))
+            conn.commit()
+
+    def remove_folder_password(self, folder_id):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE folders SET password_hash = NULL WHERE id = ?", (folder_id,))
+            conn.commit()
+
+    def get_folder_password_hash(self, folder_id):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT password_hash FROM folders WHERE id = ?", (folder_id,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    def verify_folder_password(self, folder_id, password):
+        hash_ = self.get_folder_password_hash(folder_id)
+        if hash_ is None:
+            return True
+        return hash_ == self._hash_password(password)
+
+    def set_item_password(self, item_id, password):
+        hash_ = self._hash_password(password)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE items SET password_hash = ? WHERE id = ?", (hash_, item_id))
+            conn.commit()
+
+    def remove_item_password(self, item_id):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE items SET password_hash = NULL WHERE id = ?", (item_id,))
+            conn.commit()
+
+    def get_item_password_hash(self, item_id):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT password_hash FROM items WHERE id = ?", (item_id,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    def verify_item_password(self, item_id, password):
+        hash_ = self.get_item_password_hash(item_id)
+        if hash_ is None:
+            return True
+        return hash_ == self._hash_password(password)
+
+    def get_item_by_id(self, item_id):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT item_type, title, url, category, cover_path, password_hash FROM items WHERE id = ?",
+                           (item_id,))
+            row = cursor.fetchone()
+            return row if row else None
