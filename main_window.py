@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QPushButton, QLineEdit, QScrollArea, QMessageBox,
+    QPushButton, QLineEdit, QScrollArea, QMessageBox, QFileDialog,
     QInputDialog, QStackedWidget, QLabel, QMenu, QApplication,
     QComboBox, QDialog, QDialogButtonBox, QCheckBox, QColorDialog,
     QFrame
@@ -21,7 +21,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QTime
 from PyQt6.QtGui import QIcon, QPixmap, QAction, QDragEnterEvent, QDropEvent, QColor
 
 from database import Database
-from widgets import FolderCard, ItemCard
+from widgets import FolderCard, ItemCard, ToastNotification
 
 def resource_path(relative_path):
     """获取资源的绝对路径，兼容开发环境和 PyInstaller 打包后的环境"""
@@ -30,6 +30,108 @@ def resource_path(relative_path):
     except AttributeError:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+class DraggableHelpSidebar(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_dragging = False
+        self.drag_start_x = 0
+        self.drag_start_y = 0
+        self.sidebar_start_x = 0
+        self.sidebar_start_y = 0
+        self.min_width = 200
+        self.max_width = 400
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.is_dragging = True
+            self.drag_start_x = event.globalPosition().x()
+            self.drag_start_y = event.globalPosition().y()
+            self.sidebar_start_x = self.geometry().x()
+            self.sidebar_start_y = self.geometry().y()
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+
+    def mouseMoveEvent(self, event):
+        if self.is_dragging:
+            delta_x = event.globalPosition().x() - self.drag_start_x
+            delta_y = event.globalPosition().y() - self.drag_start_y
+            
+            new_x = self.sidebar_start_x + delta_x
+            new_y = self.sidebar_start_y + delta_y
+            
+            parent_rect = self.parent().geometry()
+            
+            if new_x < 0:
+                new_x = 0
+            if new_x + self.width() > parent_rect.width():
+                new_x = parent_rect.width() - self.width()
+            if new_y < 0:
+                new_y = 0
+            if new_y + self.height() > parent_rect.height():
+                new_y = parent_rect.height() - self.height()
+            
+            self.setGeometry(int(new_x), int(new_y), self.width(), self.height())
+
+    def mouseReleaseEvent(self, event):
+        self.is_dragging = False
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+
+class DraggableHelpButton(QPushButton):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_dragging = False
+        self.drag_start_x = 0
+        self.drag_start_y = 0
+        self.button_start_x = 0
+        self.button_start_y = 0
+        self.has_moved = False
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.is_dragging = False
+            self.has_moved = False
+            self.drag_start_x = event.globalPosition().x()
+            self.drag_start_y = event.globalPosition().y()
+            self.button_start_x = self.geometry().x()
+            self.button_start_y = self.geometry().y()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            delta_x = event.globalPosition().x() - self.drag_start_x
+            delta_y = event.globalPosition().y() - self.drag_start_y
+            
+            if abs(delta_x) > 5 or abs(delta_y) > 5:
+                self.is_dragging = True
+                self.has_moved = True
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+                
+                new_x = self.button_start_x + delta_x
+                new_y = self.button_start_y + delta_y
+                
+                parent_rect = self.parent().geometry()
+                
+                if new_x < 0:
+                    new_x = 0
+                if new_x + self.width() > parent_rect.width():
+                    new_x = parent_rect.width() - self.width()
+                if new_y < 0:
+                    new_y = 0
+                if new_y + self.height() > parent_rect.height():
+                    new_y = parent_rect.height() - self.height()
+                
+                self.move(int(new_x), int(new_y))
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.is_dragging:
+            self.is_dragging = False
+            self.has_moved = False
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.has_moved = False
+            super().mouseReleaseEvent(event)
 
 class DropArea(QLabel):
     file_dropped = pyqtSignal(str)
@@ -61,7 +163,7 @@ class DropArea(QLabel):
         event.acceptProposedAction()
 
 class FetchThread(QThread):
-    finished = pyqtSignal(dict)  # 返回 {'title': str, 'category': str}
+    finished = pyqtSignal(dict)  # 返回 {'title': str, 'category': str, 'cover': str}
     error = pyqtSignal(str)
 
     def __init__(self, url):
@@ -93,7 +195,161 @@ class FetchThread(QThread):
             # 2. 自动识别类别
             category = self.extract_category(soup, self.url)
 
-            self.finished.emit({'title': title, 'category': category})
+            # 3. 提取封面图片：优先 og:image
+            cover = None
+            
+            # 策略1: 查找 og:image
+            og_image = soup.find('meta', property='og:image')
+            if not og_image:
+                og_image = soup.find('meta', attrs={'name': 'og:image'})
+            if not og_image:
+                og_image = soup.find('meta', attrs={'name': 'image'})
+            if og_image and og_image.get('content'):
+                cover = og_image['content'].strip()
+            
+            # 策略2: 查找 Twitter Card 图片
+            if not cover:
+                twitter_image = soup.find('meta', property='twitter:image')
+                if not twitter_image:
+                    twitter_image = soup.find('meta', attrs={'name': 'twitter:image'})
+                if twitter_image and twitter_image.get('content'):
+                    cover = twitter_image['content'].strip()
+            
+            # 策略3: 查找 video 标签的 poster
+            if not cover:
+                video_tag = soup.find('video')
+                if video_tag and video_tag.get('poster'):
+                    cover = video_tag['poster'].strip()
+            
+            # 策略4: B站特定 - 查找缩略图脚本数据
+            if not cover and 'bilibili' in self.url:
+                import re
+                script_tags = soup.find_all('script')
+                for script in script_tags:
+                    script_content = script.string
+                    if script_content:
+                        match = re.search(r'"pic":"([^"]+)"', script_content)
+                        if match:
+                            cover = match.group(1)
+                            break
+                        match = re.search(r'cover":"([^"]+)"', script_content)
+                        if match:
+                            cover = match.group(1)
+                            break
+            
+            # 策略5: 抖音特定 - 使用Playwright获取动态渲染的封面
+            if not cover and ('douyin' in self.url or 'tiktok' in self.url.lower()):
+                try:
+                    from playwright.sync_api import sync_playwright
+                    import os
+                    import sys
+                    
+                    def get_browser_path():
+                        paths_to_check = []
+                        try:
+                            base_path = sys._MEIPASS
+                            paths_to_check.append(os.path.join(base_path, "browsers"))
+                        except AttributeError:
+                            base_path = os.path.dirname(os.path.abspath(__file__))
+                            paths_to_check.append(os.path.join(base_path, "browsers"))
+                        
+                        paths_to_check.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "browsers"))
+                        paths_to_check.append(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""))
+                        
+                        for browsers_dir in paths_to_check:
+                            if not browsers_dir or not os.path.exists(browsers_dir):
+                                continue
+                            for root, dirs, files in os.walk(browsers_dir):
+                                if "chrome.exe" in files:
+                                    return os.path.join(root, "chrome.exe")
+                                if "chrome-headless-shell.exe" in files:
+                                    return os.path.join(root, "chrome-headless-shell.exe")
+                        return None
+                    
+                    browser_path = get_browser_path()
+                    print(f"[DEBUG] Browser path found: {browser_path}")
+                    
+                    with sync_playwright() as p:
+                        launch_options = {"headless": True}
+                        if browser_path:
+                            launch_options["executable_path"] = browser_path
+                        browser = p.chromium.launch(**launch_options)
+                        context = browser.new_context(
+                            user_agent='Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36',
+                            viewport={'width': 375, 'height': 812}
+                        )
+                        page = context.new_page()
+                        page.goto(self.url, timeout=10000, wait_until='domcontentloaded')
+                        
+                        # 等待页面加载完成
+                        page.wait_for_timeout(2000)
+                        
+                        # 尝试多种方式获取封面
+                        cover = page.evaluate("""() => {
+                            // 方式1: 查找 og:image
+                            const ogImage = document.querySelector('meta[property="og:image"]') || 
+                                           document.querySelector('meta[name="og:image"]');
+                            if (ogImage) return ogImage.content;
+                            
+                            // 方式2: 查找 video 标签的 poster
+                            const video = document.querySelector('video');
+                            if (video && video.poster) return video.poster;
+                            
+                            // 方式3: 查找封面图片元素
+                            const coverImg = document.querySelector('img[class*="cover"]') ||
+                                             document.querySelector('img[class*="poster"]') ||
+                                             document.querySelector('img[class*="thumbnail"]');
+                            if (coverImg && coverImg.src) return coverImg.src;
+                            
+                            // 方式4: 从页面数据中提取
+                            const scripts = document.querySelectorAll('script');
+                            for (const script of scripts) {
+                                const content = script.textContent;
+                                if (content) {
+                                    const coverMatch = content.match(/"cover":"([^"]+)"/);
+                                    if (coverMatch) return coverMatch[1];
+                                    const posterMatch = content.match(/"poster":"([^"]+)"/);
+                                    if (posterMatch) return posterMatch[1];
+                                }
+                            }
+                            
+                            return null;
+                        }""")
+                        
+                        browser.close()
+                    print(f"[DEBUG] Playwright fetched cover: {cover}")
+                except Exception as e:
+                    print(f"[DEBUG] Playwright failed for douyin: {str(e)}")
+            
+            # 策略6: 查找带有特定类名的图片（视频缩略图）
+            if not cover:
+                thumbnail_selectors = [
+                    'img.cover', 'img.thumbnail', 'img.video-cover',
+                    'img[class*="cover"]', 'img[class*="thumbnail"]',
+                    'meta[itemprop="image"]'
+                ]
+                for selector in thumbnail_selectors:
+                    img_tag = soup.select_one(selector)
+                    if img_tag:
+                        if img_tag.has_attr('src'):
+                            cover = img_tag['src'].strip()
+                        elif img_tag.has_attr('content'):
+                            cover = img_tag['content'].strip()
+                        if cover:
+                            break
+            
+            if cover:
+                # 解码JSON转义字符（如 \u002F -> /）
+                import codecs
+                cover = codecs.decode(cover, 'unicode_escape')
+                
+                from urllib.parse import urljoin
+                cover = urljoin(self.url, cover)
+                # 处理B站图片URL，确保使用高清图
+                if 'bilibili' in self.url and cover:
+                    cover = cover.replace('/168x94/', '/360x203/').replace('/240x135/', '/360x203/')
+
+            self.finished.emit({'title': title, 'category': category, 'cover': cover})
         except Exception as e:
             self.error.emit(str(e))
 
@@ -216,14 +472,14 @@ class MainWindow(QMainWindow):
                 "display_settings": "显示设置",
                 "language": "语言",
                 "about": "关于",
-                "display_title": "← 显示设置",
+                "display_title": "显示设置",
                 "display_mode": "显示模式",
                 "light_mode": "浅色",
                 "dark_mode": "深色",
                 "theme_color": "主题色",
                 "select_color": "选择颜色",
-                "about_title": "← 关于",
-                "version": "版本: v0.0.3-beta",
+                "about_title": "关于",
+                "version": "版本: v0.0.4-beta",
                 "open_source": "开源地址",
                 "language_title": "语言",
                 "chinese": "简体中文",
@@ -301,7 +557,12 @@ class MainWindow(QMainWindow):
                 "back": "← 返回",
                 "fetching": "获取中...",
                 "auto_fetch_success": "已获取标题：{0}\n自动识别类别：{1}",
-                "uncategorized": "未分类"
+                "uncategorized": "未分类",
+                "cover_label": "封面:",
+                "cover_url_placeholder": "封面URL或本地路径",
+                "select_cover": "选择封面",
+                "error": "错误",
+                "download_failed": "下载失败："
             },
             "en": {
                "window_title": "Favorites Manager",
@@ -311,14 +572,14 @@ class MainWindow(QMainWindow):
                 "display_settings": "Display Settings",
                 "language": "Language",
                 "about": "About",
-                "display_title": "← Display Settings",
+                "display_title": "Display Settings",
                 "display_mode": "Display Mode",
                 "light_mode": "Light",
                 "dark_mode": "Dark",
                 "theme_color": "Theme Color",
                 "select_color": "Choose Color",
-                "about_title": "← About",
-                "version": "Version: v0.0.3-beta",
+                "about_title": "About",
+                "version": "Version: v0.0.4-beta",
                 "open_source": "Open Source",
                 "language_title": "Language",
                 "chinese": "Simplified Chinese",
@@ -396,7 +657,12 @@ class MainWindow(QMainWindow):
                 "back": "← back",
                 "fetching": "Fetching...",
                 "auto_fetch_success": "Fetched title: {0}\nAuto-detected category: {1}",
-                "uncategorized": "Uncategorized"
+                "uncategorized": "Uncategorized",
+                "cover_label": "Cover:",
+                "cover_url_placeholder": "Cover URL or local path",
+                "select_cover": "Select Cover",
+                "error": "Error",
+                "download_failed": "Download failed: "
             }
         }
 
@@ -411,11 +677,13 @@ class MainWindow(QMainWindow):
 
         # 页面0: 收藏夹列表页
         self.folders_page = QWidget()
+        self.folders_page.setObjectName("page")
         self.setup_folders_page()
         self.stacked_widget.addWidget(self.folders_page)
 
         # 页面1: 某个收藏夹内部的详情页（收藏项列表）
         self.items_page = QWidget()
+        self.items_page.setObjectName("page")
         self.setup_items_page()
         self.stacked_widget.addWidget(self.items_page)
         self.current_category_filter = None
@@ -426,6 +694,7 @@ class MainWindow(QMainWindow):
 
         # 页面2: 添加收藏项页面
         self.add_item_page = QWidget()
+        self.add_item_page.setObjectName("page")
         self.setup_add_item_page()
         self.stacked_widget.addWidget(self.add_item_page)
 
@@ -437,9 +706,90 @@ class MainWindow(QMainWindow):
         self.settings_overlay = None       # 遮罩
         self.settings_animations = []      # 动画对象（用于清理）
 
+        # 帮助内容（不同页面有不同的帮助文档）
+        self.help_content = {
+            "zh": {
+                "folders": """<h3>收藏夹列表</h3>
+<p>欢迎使用收藏夹管理应用！</p>
+<p><strong>功能说明：</strong></p>
+<ul>
+<li>点击收藏夹卡片可进入查看其中的收藏项</li>
+<li>右键点击收藏夹可进行重命名或删除操作</li>
+<li>使用顶部搜索框可快速查找收藏夹</li>
+<li>点击右下角"+"按钮可添加新收藏夹</li>
+</ul>""",
+                "items": """<h3>收藏项列表</h3>
+<p>这里显示选中收藏夹中的所有收藏项。</p>
+<p><strong>功能说明：</strong></p>
+<ul>
+<li>点击收藏项可打开链接或文件</li>
+<li>右键点击可进行编辑或删除操作</li>
+<li>支持批量选择模式（Ctrl+点击多选）</li>
+<li>使用分类筛选可过滤显示特定类型的收藏项</li>
+<li>点击左上角"←"按钮返回收藏夹列表</li>
+</ul>""",
+                "add_item": """<h3>添加收藏项</h3>
+<p>在此页面添加新的收藏项。</p>
+<p><strong>添加链接：</strong></p>
+<ul>
+<li>输入网址链接</li>
+<li>可选输入标题和分类</li>
+<li>点击"自动获取"可自动填充标题和分类</li>
+</ul>
+<p><strong>添加文件：</strong></p>
+<ul>
+<li>点击浏览按钮选择文件</li>
+<li>或直接拖拽文件到指定区域</li>
+<li>文件标题会自动填充</li>
+</ul>"""
+            },
+            "en": {
+                "folders": """<h3>Folder List</h3>
+<p>Welcome to the bookmark management app!</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Click a folder card to view its items</li>
+<li>Right-click a folder to rename or delete</li>
+<li>Use the search box to find folders quickly</li>
+<li>Click the "+" button to add a new folder</li>
+</ul>""",
+                "items": """<h3>Item List</h3>
+<p>This shows all items in the selected folder.</p>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Click an item to open the link or file</li>
+<li>Right-click to edit or delete</li>
+<li>Supports multi-select mode (Ctrl+click)</li>
+<li>Use category filter to show specific types</li>
+<li>Click the "←" button to return to folder list</li>
+</ul>""",
+                "add_item": """<h3>Add Item</h3>
+<p>Add new items here.</p>
+<p><strong>Add Link:</strong></p>
+<ul>
+<li>Enter URL</li>
+<li>Optional: enter title and category</li>
+<li>Click "Auto Fetch" to fill title and category automatically</li>
+</ul>
+<p><strong>Add File:</strong></p>
+<ul>
+<li>Click browse button to select file</li>
+<li>Or drag file to the drop area</li>
+<li>File title is auto-filled</li>
+</ul>"""
+            }
+        }
+
+        # 帮助按钮和侧边栏
+        self._init_help_button()
+
         self.apply_theme()
 
         self.apply_language()
+
+    def show_toast(self, message):
+        toast = ToastNotification(self)
+        toast.show_message(message)
 
     def load_config(self):
         """加载配置文件，返回包含 language, theme_color, dark_mode 的字典"""
@@ -459,6 +809,219 @@ class MainWindow(QMainWindow):
                 return data
         except (FileNotFoundError, json.JSONDecodeError):
             return default_config
+
+    # ---------- 帮助按钮和侧边栏相关方法 ----------
+    def _init_help_button(self):
+        """初始化帮助按钮（可拖拽）"""
+        from PyQt6.QtWidgets import QGraphicsDropShadowEffect
+
+        self.help_btn = DraggableHelpButton(self)
+        self.help_btn.setFixedSize(48, 48)
+        self.help_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # 设置圆形样式
+        self.help_btn.setStyleSheet("""
+            QPushButton {
+                border-radius: 24px;
+                background-color: #0078d7;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #005a9e;
+            }
+            QPushButton:pressed {
+                background-color: #004a85;
+            }
+        """)
+        
+        # 加载帮助图标
+        icon_path = resource_path("resources/icons/help.svg")
+        if os.path.exists(icon_path):
+            self.help_btn.setIcon(QIcon(icon_path))
+            self.help_btn.setIconSize(self.help_btn.size())
+        else:
+            self.help_btn.setText("?")
+        
+        self.help_btn.clicked.connect(self.open_help)
+        self.help_btn.raise_()
+
+        # 添加阴影效果
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(10)
+        shadow.setOffset(2, 2)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        self.help_btn.setGraphicsEffect(shadow)
+
+        # 初始位置（右下角）
+        self._update_help_button_position()
+
+    def _update_help_button_position(self):
+        """更新帮助按钮位置（始终在右下角）"""
+        margin = 20
+        x = self.width() - self.help_btn.width() - margin
+        y = self.height() - self.help_btn.height() - margin
+        self.help_btn.move(x, y)
+        self.help_btn.raise_()
+
+    def resizeEvent(self, event):
+        """窗口大小改变时更新帮助按钮位置"""
+        super().resizeEvent(event)
+        if hasattr(self, 'help_btn'):
+            self._update_help_button_position()
+
+    def open_help(self):
+        """打开帮助侧边栏"""
+        if hasattr(self, 'help_overlay') and self.help_overlay is not None:
+            self.close_help()
+            return
+
+        # 遮罩
+        self.help_overlay = QWidget(self)
+        self.help_overlay.setGeometry(0, 0, self.width(), self.height())
+        self.help_overlay.setStyleSheet("background-color: rgba(0,0,0,0.3);")
+        self.help_overlay.mousePressEvent = lambda e: self.close_help()
+        self.help_overlay.raise_()
+        self.help_overlay.show()
+
+        # 创建帮助侧边栏
+        sidebar = self._create_help_sidebar()
+        sidebar.setParent(self)
+        sidebar.setFixedWidth(300)
+        sidebar.setGeometry(self.width(), 0, 300, self.height())
+        sidebar.raise_()
+        sidebar.show()
+
+        self.help_sidebar = sidebar
+
+        # 移入动画
+        anim = QPropertyAnimation(sidebar, b"geometry")
+        anim.setDuration(300)
+        anim.setStartValue(QRect(self.width(), 0, 300, self.height()))
+        anim.setEndValue(QRect(self.width() - 300, 0, 300, self.height()))
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start()
+        self.help_anim = anim
+
+    def close_help(self):
+        """关闭帮助侧边栏"""
+        if not hasattr(self, 'help_sidebar') or self.help_sidebar is None:
+            return
+
+        sidebar = self.help_sidebar
+        
+        # 移出动画
+        anim = QPropertyAnimation(sidebar, b"geometry")
+        anim.setDuration(300)
+        anim.setStartValue(QRect(self.width() - 300, 0, 300, self.height()))
+        anim.setEndValue(QRect(self.width(), 0, 300, self.height()))
+        anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        anim.finished.connect(self._cleanup_help)
+        anim.start()
+        self.help_anim = anim
+
+    def _cleanup_help(self):
+        """清理帮助侧边栏"""
+        if hasattr(self, 'help_sidebar') and self.help_sidebar:
+            self.help_sidebar.deleteLater()
+            self.help_sidebar = None
+        if hasattr(self, 'help_overlay') and self.help_overlay:
+            self.help_overlay.deleteLater()
+            self.help_overlay = None
+        if hasattr(self, 'help_anim'):
+            self.help_anim = None
+
+    def _create_help_sidebar(self):
+        """创建帮助侧边栏（可拖拽）"""
+        sidebar = DraggableHelpSidebar(self)
+        
+        bg_color = "#f5f5f5" if not MainWindow.current_dark_mode else "#2b2b2b"
+        text_color = "#333" if not MainWindow.current_dark_mode else "#fff"
+        border_color = "#ccc" if not MainWindow.current_dark_mode else "#444"
+        
+        sidebar.setStyleSheet(f"""
+            QWidget {{
+                background-color: {bg_color};
+                color: {text_color};
+                border-left: 1px solid {border_color};
+            }}
+            QLabel {{
+                color: {text_color};
+            }}
+        """)
+
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = QWidget()
+        header.setStyleSheet(f"background-color: {bg_color}; border-bottom: 1px solid {border_color};")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 12, 16, 12)
+        header_layout.setSpacing(10)
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                font-size: 18px;
+                color: {text_color};
+            }}
+            QPushButton:hover {{
+                background-color: rgba(0,0,0,0.1);
+                border-radius: 50%;
+            }}
+        """)
+        close_btn.clicked.connect(self.close_help)
+
+        title = QLabel(self.strings[self.current_lang].get("help_title", "帮助"))
+        title.setStyleSheet("font-size: 18px; font-weight: bold;")
+
+        header_layout.addWidget(close_btn)
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        layout.addWidget(header)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("border: none;")
+
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(20, 20, 20, 20)
+
+        current_page = self._get_current_page()
+        lang = self.current_lang
+        content_list = self.help_content.get(lang, self.help_content.get("zh", {}))
+        content_html = content_list.get(current_page, "")
+
+        if not content_html:
+            content_html = "<p>该页面暂无帮助信息。</p>"
+
+        content_label = QLabel(content_html)
+        content_label.setStyleSheet(f"font-size: 14px; line-height: 1.6; color: {text_color};")
+        content_label.setWordWrap(True)
+        content_label.setOpenExternalLinks(True)
+
+        content_layout.addWidget(content_label)
+        content_layout.addStretch()
+
+        scroll_area.setWidget(content_widget)
+        layout.addWidget(scroll_area)
+
+        return sidebar
+
+    def _get_current_page(self):
+        """获取当前页面标识"""
+        index = self.stacked_widget.currentIndex()
+        if index == 0:
+            return "folders"
+        elif index == 1:
+            return "items"
+        elif index == 2:
+            return "add_item"
+        return "folders"
 
     # ---------- 设置侧边栏相关方法 ----------
     def open_settings(self):
@@ -623,7 +1186,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(8)
 
         # 标题（带返回指示）
-        title = QLabel("← " + self.strings[self.current_lang]["display_title"])
+        title = QLabel(self.strings[self.current_lang]["display_title"])
         title.setStyleSheet("padding: 16px; font-size: 16px; font-weight: bold; border-bottom: 1px solid #ddd;")
         layout.addWidget(title)
 
@@ -675,7 +1238,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        title = QLabel("← " + self.strings[self.current_lang]["about_title"])
+        title = QLabel(self.strings[self.current_lang]["about_title"])
         title.setStyleSheet("padding: 16px; font-size: 16px; font-weight: bold; border-bottom: 1px solid #ddd;")
         layout.addWidget(title)
 
@@ -761,9 +1324,9 @@ class MainWindow(QMainWindow):
         # 主窗口
         self.setStyleSheet(f"QMainWindow {{ background-color: {bg_color}; color: {text_color}; }}")
 
-        # 三个主要页面
+        # 三个主要页面（使用 QWidget#page 选择器，避免级联影响子控件）
         for page in (self.folders_page, self.items_page, self.add_item_page):
-            page.setStyleSheet(f"background-color: {bg_color}; color: {text_color};")
+            page.setStyleSheet(f"QWidget#page {{ background-color: {bg_color}; color: {text_color}; }}")
 
         # 搜索框
         search_box_style = f"""
@@ -801,16 +1364,45 @@ class MainWindow(QMainWindow):
             # 跳过侧边栏内的菜单按钮（它们有透明背景）
             if any(widget.isAncestorOf(sb) for sb in self.settings_sidebars):
                 continue
+            # 跳过帮助按钮（它有自己的圆形样式）
+            if hasattr(self, 'help_btn') and widget == self.help_btn:
+                continue
             widget.setStyleSheet(button_style)
+        
+        # 更新帮助按钮样式（保持圆形）
+        if hasattr(self, 'help_btn'):
+            self.help_btn.setStyleSheet(f"""
+                QPushButton {{
+                    border-radius: 24px;
+                    background-color: {color_str};
+                    border: none;
+                }}
+                QPushButton:hover {{
+                    background-color: {color_str}CC;
+                }}
+                QPushButton:pressed {{
+                    background-color: {color_str}AA;
+                }}
+            """)
 
-        # 卡片
-        card_style = f"""
-            border: 1px solid {color_str};
-            border-radius: 8px;
-            background-color: {alt_bg};
+        # FolderCard 和 ItemCard 使用 update_theme 方法更新主题
+        for card in self.findChildren(FolderCard):
+            card.update_theme(dark)
+        for card in self.findChildren(ItemCard):
+            card.update_theme(dark)
+
+        # 滚动区域背景
+        scroll_style = f"""
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background-color: {bg_color};
+            }}
         """
-        for card in self.findChildren((FolderCard, ItemCard)):
-            card.setStyleSheet(card_style)
+        for scroll in self.findChildren(QScrollArea):
+            scroll.setStyleSheet(scroll_style)
 
         # 拖拽区域
         drop_style = f"""
@@ -988,7 +1580,9 @@ class MainWindow(QMainWindow):
 
         # 更新搜索框占位符
         for obj_name, placeholder_key in [("folder_search", "folder_search_placeholder"),
-                                          ("item_search", "item_search_placeholder")]:
+                                          ("item_search", "item_search_placeholder"),
+                                          ("link_cover_edit", "cover_url_placeholder"),
+                                          ("file_cover_edit", "cover_url_placeholder")]:
             widget = getattr(self, obj_name, None)
             if widget:
                 widget.setPlaceholderText(self.strings[self.current_lang][placeholder_key])
@@ -998,6 +1592,8 @@ class MainWindow(QMainWindow):
             ("add_item_btn", "add_item_btn"),
             ("confirm_btn", "confirm"),  # 添加收藏项页面中的确认按钮
             ("auto_fetch_btn", "auto_fetch"),
+            ("link_cover_btn", "select_cover"),
+            ("file_cover_btn", "select_cover"),
         ]:
             widget = self.findChild(QPushButton, obj_name)
             if widget:
@@ -1013,9 +1609,11 @@ class MainWindow(QMainWindow):
             "label_link_url": "link_url",
             "label_link_title": "title_label",
             "label_link_category": "category_label",
+            "label_link_cover": "cover_label",
             "label_file_drop": "file_drop",
             "label_file_title": "title_label",
             "label_file_category": "category_label",
+            "label_file_cover": "cover_label",
         }
         for obj_name, text_key in label_map.items():
             label = self.findChild(QLabel, obj_name)
@@ -1076,6 +1674,10 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'file_category_edit'):
             self.file_category_edit.setPlaceholderText(self.strings[self.current_lang]["category_placeholder"])
 
+        # 更新收藏夹卡片的语言
+        for card in self.findChildren(FolderCard):
+            card.update_language(self.current_lang)
+
 
     def setup_folders_page(self):
         layout = QVBoxLayout(self.folders_page)
@@ -1106,7 +1708,7 @@ class MainWindow(QMainWindow):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_widget = QWidget()
         self.folders_grid_layout = QGridLayout(scroll_widget)
-        self.folders_grid_layout.setSpacing(20)
+        self.folders_grid_layout.setSpacing(3)
         scroll.setWidget(scroll_widget)
         layout.addWidget(scroll)
 
@@ -1119,9 +1721,10 @@ class MainWindow(QMainWindow):
                 widget.deleteLater()
         folders = self.db.get_folders()
         row, col = 0, 0
-        for folder_id, name, pwd_hash in folders:
+        for folder_id, name, pwd_hash, created_at in folders:
             has_password = pwd_hash is not None
-            card = FolderCard(folder_id, name, has_password)
+            item_count = self.db.get_folder_item_count(folder_id)
+            card = FolderCard(folder_id, name, has_password, item_count, created_at, self.current_lang)
             card.clicked.connect(lambda fid=folder_id: self.open_folder(fid, name))
             card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             card.customContextMenuRequested.connect(lambda pos, fid=folder_id, n=name: self.show_folder_context_menu(pos, fid, n))
@@ -1262,12 +1865,13 @@ class MainWindow(QMainWindow):
         row, col = 0, 0
         for item_id, item_type, title, url, category, cover_path, pwd_hash in items:
             has_password = pwd_hash is not None
-            card = ItemCard(item_id, title, cover_path, category, has_password)
+            card = ItemCard(item_id, title, cover_path, category, has_password, url, self.current_lang)
             card.clicked.connect(lambda _, iid=item_id: self.open_item_by_id(iid))
             card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             card.customContextMenuRequested.connect(
                 lambda pos, iid=item_id, t=title, u=url, cat=category, itype=item_type:
                 self.show_item_context_menu(pos, iid, t, u, cat, itype))
+            card.update_theme(MainWindow.current_dark_mode)
             self.items_grid_layout.addWidget(card, row, col)
             col += 1
             if col >= 4:
@@ -1288,7 +1892,7 @@ class MainWindow(QMainWindow):
             if os.path.exists(url):
                 os.startfile(url)
             else:
-                QMessageBox.warning(self, self.strings[self.current_lang]["file_not_found"], fself.strings[self.current_lang]["file_not_found_msg"].format(url))
+                self.show_toast(self.strings[self.current_lang]["file_not_found_msg"].format(url))
 
     def open_item_by_id(self, item_id):
         # 从数据库获取该条目的信息（需要新增方法 get_item_by_id）
@@ -1313,8 +1917,7 @@ class MainWindow(QMainWindow):
             if os.path.exists(url):
                 os.startfile(url)
             else:
-                QMessageBox.warning(self, self.strings[self.current_lang]["file_not_found"],
-                                    self.strings[self.current_lang]["file_not_found_msg"].format(url))
+                self.show_toast(self.strings[self.current_lang]["file_not_found_msg"].format(url))
 
     def extract_url_from_text(self, text):
         pattern = r'https?://[^\s<>"\'{}|\\^`\[\]]+'
@@ -1542,6 +2145,20 @@ class MainWindow(QMainWindow):
         link_category_label.setObjectName("label_link_category")
         link_layout.addWidget(link_category_label)
         link_layout.addWidget(self.link_category_edit)
+        
+        link_cover_label = QLabel(self.strings[self.current_lang].get("cover_label", "Cover:"))
+        link_cover_label.setObjectName("label_link_cover")
+        link_layout.addWidget(link_cover_label)
+        self.link_cover_edit = QLineEdit()
+        self.link_cover_edit.setObjectName("link_cover_edit")
+        self.link_cover_edit.setPlaceholderText(self.strings[self.current_lang].get("cover_url_placeholder", "Cover URL or local path"))
+        link_layout.addWidget(self.link_cover_edit)
+        
+        link_cover_btn = QPushButton(self.strings[self.current_lang].get("select_cover", "Select Cover"))
+        link_cover_btn.setObjectName("link_cover_btn")
+        link_cover_btn.clicked.connect(self.select_cover_for_item)
+        link_layout.addWidget(link_cover_btn)
+        
         link_layout.addWidget(auto_btn)
         link_layout.addStretch()
         self.add_item_stack.addWidget(link_widget)
@@ -1569,6 +2186,20 @@ class MainWindow(QMainWindow):
         file_layout.addWidget(file_category_label)
         self.file_category_edit.setPlaceholderText(self.strings[self.current_lang]["category_placeholder"])
         file_layout.addWidget(self.file_category_edit)
+        
+        file_cover_label = QLabel(self.strings[self.current_lang].get("cover_label", "Cover:"))
+        file_cover_label.setObjectName("label_file_cover")
+        file_layout.addWidget(file_cover_label)
+        self.file_cover_edit = QLineEdit()
+        self.file_cover_edit.setObjectName("file_cover_edit")
+        self.file_cover_edit.setPlaceholderText(self.strings[self.current_lang].get("cover_url_placeholder", "Cover URL or local path"))
+        file_layout.addWidget(self.file_cover_edit)
+        
+        file_cover_btn = QPushButton(self.strings[self.current_lang].get("select_cover", "Select Cover"))
+        file_cover_btn.setObjectName("file_cover_btn")
+        file_cover_btn.clicked.connect(self.select_cover_for_item)
+        file_layout.addWidget(file_cover_btn)
+        
         file_layout.addStretch()
         self.add_item_stack.addWidget(file_widget)
 
@@ -1610,8 +2241,7 @@ class MainWindow(QMainWindow):
             if isinstance(card, ItemCard) and card.checkbox.isChecked():
                 selected_ids.append(card.item_id)
         if not selected_ids:
-            QMessageBox.information(self, self.strings[self.current_lang]["info"],
-                                    self.strings[self.current_lang]["no_item_selected"])
+            self.show_toast(self.strings[self.current_lang]["no_item_selected"])
             return
         reply = QMessageBox.question(self, self.strings[self.current_lang]["confirm_delete"],
                                      self.strings[self.current_lang]["batch_delete_confirm"].format(len(selected_ids)),
@@ -1640,8 +2270,7 @@ class MainWindow(QMainWindow):
     def auto_fetch_link_info(self):
         url = self.link_url_edit.text().strip()
         if not url:
-            QMessageBox.warning(self, self.strings[self.current_lang]["warning"],
-                                self.strings[self.current_lang]["warning_empty_link"])
+            self.show_toast(self.strings[self.current_lang]["warning_empty_link"])
             return
         url = self.extract_url_from_text(url)
         if not url.startswith(('http://', 'https://')):
@@ -1658,87 +2287,274 @@ class MainWindow(QMainWindow):
     def on_fetch_finished(self, result):
         title = result.get('title', '')
         category_key = result.get('category', 'uncategorized')
-        # 翻译类别
+        cover = result.get('cover', '')
         category_display = self.category_translations[self.current_lang].get(category_key, category_key)
+        print(f"[DEBUG] Auto fetch result: title={title}, category={category_display}, cover={cover}")
         if title:
             self.link_title_edit.setText(title)
         if category_display:
             self.link_category_edit.setText(category_display)
+        if cover:
+            self.link_cover_edit.setText(cover)
+            print(f"[DEBUG] Cover URL set to: {cover}")
+        else:
+            print(f"[DEBUG] No cover found")
         self.auto_fetch_btn.setEnabled(True)
         self.auto_fetch_btn.setText(self.strings[self.current_lang]["auto_fetch"])
-        QMessageBox.information(
-            self,
-            self.strings[self.current_lang]["info"],
-            self.strings[self.current_lang]["auto_fetch_success"].format(title, category_display)
-        )
+        self.show_toast(self.strings[self.current_lang]["auto_fetch_success"].format(title, category_display))
 
     def on_fetch_error(self, error_msg):
         self.auto_fetch_btn.setEnabled(True)
         self.auto_fetch_btn.setText(self.strings[self.current_lang]["auto_fetch"])
-        QMessageBox.warning(self, self.strings[self.current_lang]["warning"],
-                            f"获取失败：{error_msg}\n请检查网络或链接是否正确。")
+        self.show_toast(f"获取失败：{error_msg}\n请检查网络或链接是否正确。")
 
     def add_item_confirm(self):
         if self.current_folder_id is None:
-            QMessageBox.warning(self, self.strings[self.current_lang]["warning"], self.strings[self.current_lang]["warning_no_folder"])
+            self.show_toast(self.strings[self.current_lang]["warning_no_folder"])
             return
         item_type = "link" if self.item_type_combo.currentIndex() == 0 else "file"
+        cover_path = ""
+        if item_type == "link":
+            cover_path = getattr(self, 'link_cover_edit', None) and self.link_cover_edit.text().strip() or ""
+        else:
+            cover_path = getattr(self, 'file_cover_edit', None) and self.file_cover_edit.text().strip() or ""
+        
+        if cover_path and cover_path.startswith(('http://', 'https://')):
+            import tempfile
+            import warnings
+            from urllib3.exceptions import InsecureRequestWarning
+            warnings.filterwarnings('ignore', category=InsecureRequestWarning)
+            
+            temp_dir = tempfile.gettempdir()
+            
+            image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.avif')
+            
+            from urllib.parse import urlparse
+            parsed = urlparse(cover_path)
+            path_lower = parsed.path.lower()
+            
+            is_image_url = any(path_lower.endswith(ext) for ext in image_extensions)
+            
+            actual_image_url = cover_path
+            
+            if not is_image_url:
+                try:
+                    from playwright.sync_api import sync_playwright
+                    with sync_playwright() as p:
+                        browser = p.chromium.launch(headless=True, timeout=10000)
+                        context = browser.new_context(
+                            viewport={'width': 800, 'height': 600},
+                            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        )
+                        page = context.new_page()
+                        
+                        page.goto(cover_path, timeout=8000, wait_until='domcontentloaded')
+                        
+                        og_image = page.evaluate("""() => {
+                            const meta = document.querySelector('meta[property="og:image"]') || 
+                                         document.querySelector('meta[name="og:image"]') ||
+                                         document.querySelector('meta[name="image"]');
+                            return meta ? meta.getAttribute('content') : null;
+                        }""")
+                        
+                        if og_image:
+                            if og_image.startswith('//'):
+                                actual_image_url = f"{parsed.scheme}:{og_image}"
+                            elif og_image.startswith('/'):
+                                actual_image_url = f"{parsed.scheme}://{parsed.netloc}{og_image}"
+                            elif not og_image.startswith(('http://', 'https://')):
+                                from urllib.parse import urljoin
+                                actual_image_url = urljoin(cover_path, og_image)
+                            else:
+                                actual_image_url = og_image
+                        else:
+                            actual_image_url = None
+                        
+                        browser.close()
+                    
+                    if not actual_image_url:
+                        self.show_toast(self.strings[self.current_lang].get("download_failed", "Download failed: ") + "无法从页面中提取封面图片")
+                        return
+                except Exception as e:
+                    self.show_toast(self.strings[self.current_lang].get("download_failed", "Download failed: ") + f"提取封面失败: {str(e)}")
+                    return
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'identity'
+            }
+            
+            success = False
+            for method in ['requests', 'playwright']:
+                try:
+                    if method == 'requests':
+                        print(f"[DEBUG] Downloading cover from: {actual_image_url}")
+                        response = requests.get(actual_image_url, timeout=8, headers=headers, allow_redirects=True, stream=True, verify=False)
+                        response.raise_for_status()
+                        
+                        temp_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}.tmp")
+                        with open(temp_path, 'wb') as f:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                        
+                        from PIL import Image
+                        with Image.open(temp_path) as img:
+                            target_w, target_h = 360, 200
+                            img_w, img_h = img.size
+                            
+                            print(f"[DEBUG] Original image: {img_w}x{img_h}")
+                            
+                            scale_w = target_w / img_w
+                            scale_h = target_h / img_h
+                            scale = max(scale_w, scale_h)
+                            
+                            new_w = max(int(img_w * scale), target_w)
+                            new_h = max(int(img_h * scale), target_h)
+                            
+                            img = img.resize((new_w, new_h), Image.LANCZOS)
+                            print(f"[DEBUG] Resized to: {new_w}x{new_h}")
+                            
+                            left = max(0, (new_w - target_w) // 2)
+                            top = max(0, (new_h - target_h) // 2)
+                            right = min(new_w, left + target_w)
+                            bottom = min(new_h, top + target_h)
+                            
+                            img = img.crop((left, top, right, bottom))
+                            print(f"[DEBUG] Cropped to: {img.size[0]}x{img.size[1]}")
+                            
+                            png_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}.png")
+                            img.save(png_path, 'PNG')
+                        os.remove(temp_path)
+                        cover_path = png_path
+                        print(f"[DEBUG] Cover downloaded and processed successfully")
+                        success = True
+                        break
+                    else:
+                        from playwright.sync_api import sync_playwright
+                        with sync_playwright() as p:
+                            browser = p.chromium.launch(headless=True, timeout=10000)
+                            context = browser.new_context(
+                                viewport={'width': 800, 'height': 600},
+                                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                            )
+                            page = context.new_page()
+                            
+                            page.goto(actual_image_url, timeout=8000, wait_until='domcontentloaded')
+                            
+                            temp_png_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}_temp.png")
+                            page.screenshot(path=temp_png_path, type='png')
+                            
+                            browser.close()
+                            
+                            if os.path.exists(temp_png_path) and os.path.getsize(temp_png_path) > 0:
+                                from PIL import Image
+                                with Image.open(temp_png_path) as img:
+                                    target_w, target_h = 360, 200
+                                    img_w, img_h = img.size
+                                    
+                                    scale_w = target_w / img_w
+                                    scale_h = target_h / img_h
+                                    scale = max(scale_w, scale_h)
+                                    
+                                    new_w = max(int(img_w * scale), target_w)
+                                    new_h = max(int(img_h * scale), target_h)
+                                    
+                                    img = img.resize((new_w, new_h), Image.LANCZOS)
+                                    
+                                    left = max(0, (new_w - target_w) // 2)
+                                    top = max(0, (new_h - target_h) // 2)
+                                    right = min(new_w, left + target_w)
+                                    bottom = min(new_h, top + target_h)
+                                    
+                                    img = img.crop((left, top, right, bottom))
+                                    
+                                    png_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}.png")
+                                    img.save(png_path, 'PNG')
+                                os.remove(temp_png_path)
+                                cover_path = png_path
+                                print(f"[DEBUG] Cover captured with playwright")
+                                success = True
+                                break
+                            else:
+                                raise Exception("截图为空")
+                except Exception as e:
+                    print(f"[DEBUG] Method {method} failed: {str(e)}")
+                    continue
+            
+            if not success:
+                self.show_toast(self.strings[self.current_lang].get("download_failed", "Download failed: ") + "所有下载方式均失败")
+                return
+        
         if self.editing_item_id is not None:
             if item_type == "link":
                 raw_url = self.link_url_edit.text().strip()
                 url = self.extract_url_from_text(raw_url)
                 if not url:
-                    QMessageBox.warning(self, self.strings[self.current_lang]["warning"], self.strings[self.current_lang]["warning_empty_url"])
+                    self.show_toast(self.strings[self.current_lang]["warning_empty_url"])
                     return
                 title = self.link_title_edit.text().strip() or url
                 category = self.link_category_edit.text().strip() or self.strings[self.current_lang]["default_category"]
-                self.db.update_item(self.editing_item_id, title, url, category, "")
+                self.db.update_item(self.editing_item_id, title, url, category, cover_path)
             else:
                 if not self.dropped_file_path:
-                    QMessageBox.warning(self, self.strings[self.current_lang]["warning"], self.strings[self.current_lang]["warning_drag_file"])
+                    self.show_toast(self.strings[self.current_lang]["warning_drag_file"])
                     return
                 title = self.file_title_edit.text().strip() or os.path.basename(self.dropped_file_path)
                 category = self.file_category_edit.text().strip() or self.strings[self.current_lang]["default_file_category"]
-                self.db.update_item(self.editing_item_id, title, self.dropped_file_path, category, "")
-            QMessageBox.information(self, self.strings[self.current_lang]["info"], self.strings[self.current_lang]["success_update"])
+                self.db.update_item(self.editing_item_id, title, self.dropped_file_path, category, cover_path)
+            self.show_toast(self.strings[self.current_lang]["success_update"])
             self.editing_item_id = None
             self.editing_item_type = None
+            self.switch_to_page(1)
         else:
             if item_type == "link":
                 url = self.link_url_edit.text().strip()
                 url = self.extract_url_from_text(url)
                 if not url:
-                    QMessageBox.warning(self, self.strings[self.current_lang]["warning"], self.strings[self.current_lang]["warning_empty_link"])
+                    self.show_toast(self.strings[self.current_lang]["warning_empty_link"])
                     return
                 if not url.startswith(('http://', 'https://')):
                     url = 'https://' + url
                 from urllib.parse import urlparse
                 parsed = urlparse(url)
                 if not parsed.netloc:
-                    QMessageBox.warning(self, self.strings[self.current_lang]["warning"], self.strings[self.current_lang]["warning_invalid_link"])
+                    self.show_toast(self.strings[self.current_lang]["warning_invalid_link"])
                     return
                 title = self.link_title_edit.text().strip() or url
                 category = self.link_category_edit.text().strip() or "未分类"
-                cover_path = ""
                 self.db.add_item(self.current_folder_id, item_type, title, url, category, cover_path)
             else:
                 if not self.dropped_file_path:
-                    QMessageBox.warning(self, self.strings[self.current_lang]["warning"], self.strings[self.current_lang]["warning_drag_file_to_area"])
+                    self.show_toast(self.strings[self.current_lang]["warning_drag_file_to_area"])
                     return
                 title = self.file_title_edit.text().strip() or os.path.basename(self.dropped_file_path)
                 category = self.file_category_edit.text().strip() or "文件"
-                cover_path = ""
                 self.db.add_item(self.current_folder_id, item_type, title, self.dropped_file_path, category, cover_path)
-            QMessageBox.information(self, self.strings[self.current_lang]["info"], self.strings[self.current_lang]["success_add"])
+            self.show_toast(self.strings[self.current_lang]["success_add"])
+            self.switch_to_page(1)
         self.link_url_edit.clear()
         self.link_title_edit.clear()
         self.link_category_edit.clear()
+        self.link_cover_edit.clear()
         self.file_title_edit.clear()
         self.file_category_edit.clear()
+        self.file_cover_edit.clear()
         self.dropped_file_path = None
         self.drop_area.setText(self.strings[self.current_lang]["drag_hint"])
         self.load_items_in_folder(self.current_folder_id)
-        self.switch_to_page(1)
+
+    def select_cover_for_item(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, 
+                                                   self.strings[self.current_lang].get("select_cover", "Select Cover Image"),
+                                                   "",
+                                                   "Image Files (*.png *.jpg *.jpeg *.gif *.bmp *.svg)")
+        if file_path:
+            if self.item_type_combo.currentIndex() == 0:
+                self.link_cover_edit.setText(file_path)
+            else:
+                self.file_cover_edit.setText(file_path)
 
     def resizeEvent(self, event):
         if self.settings_overlay:
