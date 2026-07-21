@@ -53,8 +53,15 @@ class Database:
     def get_folders(self):
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, password_hash FROM folders ORDER BY created_at DESC")
+            cursor.execute("SELECT id, name, password_hash, created_at FROM folders ORDER BY created_at DESC")
             return cursor.fetchall()
+    
+    def get_folder_item_count(self, folder_id):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM items WHERE folder_id = ?", (folder_id,))
+            row = cursor.fetchone()
+            return row[0] if row else 0
 
     def add_item(self, folder_id, item_type, title, url_or_path, category, cover_path):
         with sqlite3.connect(self.db_path) as conn:
