@@ -15,13 +15,14 @@ from PyQt6.QtWidgets import (
     QPushButton, QLineEdit, QScrollArea, QMessageBox, QFileDialog,
     QInputDialog, QStackedWidget, QLabel, QMenu, QApplication,
     QComboBox, QDialog, QDialogButtonBox, QCheckBox, QColorDialog,
-    QFrame
+    QFrame, QTextEdit, QSlider, QAbstractItemView
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QTimer, QRect,QParallelAnimationGroup, QThread
-from PyQt6.QtGui import QIcon, QPixmap, QAction, QDragEnterEvent, QDropEvent, QColor
+from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QTimer, QRect, QParallelAnimationGroup, QThread, QSize
+from PyQt6.QtGui import QIcon, QPixmap, QAction, QDragEnterEvent, QDropEvent, QColor, QTransform, QPainter, QPalette
 
 from database import Database
 from widgets import FolderCard, ItemCard, ToastNotification
+from background_manager import background_manager
 
 def resource_path(relative_path):
     """获取资源的绝对路径，兼容开发环境和 PyInstaller 打包后的环境"""
@@ -30,6 +31,28 @@ def resource_path(relative_path):
     except AttributeError:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+class CardContainerWidget(QWidget):
+    """自定义卡片容器，确保背景不被父窗口覆盖，支持背景图片"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+    def update_background(self):
+        """更新背景"""
+        self.update()
+        
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # 使用背景管理器渲染卡片区域背景
+        background_manager.render_card_background(
+            painter,
+            self.rect(),
+            MainWindow.current_theme_color,
+            MainWindow.current_dark_mode
+        )
+        painter.end()
 
 class DraggableHelpSidebar(QWidget):
     def __init__(self, parent=None):
@@ -237,89 +260,14 @@ class FetchThread(QThread):
                             cover = match.group(1)
                             break
             
-            # 策略5: 抖音特定 - 使用Playwright获取动态渲染的封面
-            if not cover and ('douyin' in self.url or 'tiktok' in self.url.lower()):
+            # 策略5: 使用封面提取器获取动态渲染的封面（支持抖音、快手、小红书等）
+            if not cover:
                 try:
-                    from playwright.sync_api import sync_playwright
-                    import os
-                    import sys
-                    
-                    def get_browser_path():
-                        paths_to_check = []
-                        try:
-                            base_path = sys._MEIPASS
-                            paths_to_check.append(os.path.join(base_path, "browsers"))
-                        except AttributeError:
-                            base_path = os.path.dirname(os.path.abspath(__file__))
-                            paths_to_check.append(os.path.join(base_path, "browsers"))
-                        
-                        paths_to_check.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "browsers"))
-                        paths_to_check.append(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""))
-                        
-                        for browsers_dir in paths_to_check:
-                            if not browsers_dir or not os.path.exists(browsers_dir):
-                                continue
-                            for root, dirs, files in os.walk(browsers_dir):
-                                if "chrome.exe" in files:
-                                    return os.path.join(root, "chrome.exe")
-                                if "chrome-headless-shell.exe" in files:
-                                    return os.path.join(root, "chrome-headless-shell.exe")
-                        return None
-                    
-                    browser_path = get_browser_path()
-                    print(f"[DEBUG] Browser path found: {browser_path}")
-                    
-                    with sync_playwright() as p:
-                        launch_options = {"headless": True}
-                        if browser_path:
-                            launch_options["executable_path"] = browser_path
-                        browser = p.chromium.launch(**launch_options)
-                        context = browser.new_context(
-                            user_agent='Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36',
-                            viewport={'width': 375, 'height': 812}
-                        )
-                        page = context.new_page()
-                        page.goto(self.url, timeout=10000, wait_until='domcontentloaded')
-                        
-                        # 等待页面加载完成
-                        page.wait_for_timeout(2000)
-                        
-                        # 尝试多种方式获取封面
-                        cover = page.evaluate("""() => {
-                            // 方式1: 查找 og:image
-                            const ogImage = document.querySelector('meta[property="og:image"]') || 
-                                           document.querySelector('meta[name="og:image"]');
-                            if (ogImage) return ogImage.content;
-                            
-                            // 方式2: 查找 video 标签的 poster
-                            const video = document.querySelector('video');
-                            if (video && video.poster) return video.poster;
-                            
-                            // 方式3: 查找封面图片元素
-                            const coverImg = document.querySelector('img[class*="cover"]') ||
-                                             document.querySelector('img[class*="poster"]') ||
-                                             document.querySelector('img[class*="thumbnail"]');
-                            if (coverImg && coverImg.src) return coverImg.src;
-                            
-                            // 方式4: 从页面数据中提取
-                            const scripts = document.querySelectorAll('script');
-                            for (const script of scripts) {
-                                const content = script.textContent;
-                                if (content) {
-                                    const coverMatch = content.match(/"cover":"([^"]+)"/);
-                                    if (coverMatch) return coverMatch[1];
-                                    const posterMatch = content.match(/"poster":"([^"]+)"/);
-                                    if (posterMatch) return posterMatch[1];
-                                }
-                            }
-                            
-                            return null;
-                        }""")
-                        
-                        browser.close()
-                    print(f"[DEBUG] Playwright fetched cover: {cover}")
+                    from cover_extractor import extract_cover
+                    cover = extract_cover(self.url)
+                    print(f"[DEBUG] cover_extractor fetched cover: {cover}")
                 except Exception as e:
-                    print(f"[DEBUG] Playwright failed for douyin: {str(e)}")
+                    print(f"[DEBUG] cover_extractor failed: {str(e)}")
             
             # 策略6: 查找带有特定类名的图片（视频缩略图）
             if not cover:
@@ -413,6 +361,11 @@ class MainWindow(QMainWindow):
     # 类变量保存当前主题色和显示模式
     current_theme_color = QColor("#0078d7")   # 默认蓝色
     current_dark_mode = False
+    
+    # 线程安全的信号定义
+    summary_token_signal = pyqtSignal(str)    # 流式输出摘要token
+    summary_result_signal = pyqtSignal(str)   # 最终摘要结果
+    toast_signal = pyqtSignal(str)            # Toast提示消息
     category_translations = {
         "zh": {
             "programming": "编程",
@@ -452,6 +405,11 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
         self.anim_group = None
         self.db = Database()
+        
+        # 连接线程安全信号
+        self.summary_token_signal.connect(self._update_summary_stream)
+        self.summary_result_signal.connect(self._set_summary_result)
+        self.toast_signal.connect(self.show_toast)
         # 属性
         self.password_overlay = None
         self.password_sidebar = None
@@ -479,7 +437,7 @@ class MainWindow(QMainWindow):
                 "theme_color": "主题色",
                 "select_color": "选择颜色",
                 "about_title": "关于",
-                "version": "版本: v0.0.4-beta",
+                "version": "版本: v0.1.0-beta",
                 "open_source": "开源地址",
                 "language_title": "语言",
                 "chinese": "简体中文",
@@ -561,8 +519,39 @@ class MainWindow(QMainWindow):
                 "cover_label": "封面:",
                 "cover_url_placeholder": "封面URL或本地路径",
                 "select_cover": "选择封面",
+                "select_cover_hint": "选择本地图片文件作为封面",
+                "browse_files": "浏览文件",
+                "no_file_selected": "未选择文件",
+                "local_file": "本地文件",
+                "preset_cover": "预设封面",
+                "confirm": "确认",
+                "cancel": "取消",
+                "summary_label": "摘要:",
+                "summary_placeholder": "输入摘要...",
+                "ai_summary_btn": "AI生成摘要",
+                "ai_generating": "AI生成中...",
                 "error": "错误",
-                "download_failed": "下载失败："
+                "download_failed": "下载失败：",
+                "bg_settings": "大背景设置",
+                "main_theme_opacity": "主题色透明度",
+                "main_bg_image": "背景图片",
+                "main_bg_image_opacity": "背景图片透明度",
+                
+                "main_bg_strategy": "背景策略",
+                "bg_stretch": "拉伸",
+                "bg_tile": "平铺",
+                "bg_center": "居中",
+                "bg_fill": "填充",
+                "bg_fit": "适应",
+                "select_bg_image": "选择背景图片",
+                "remove_bg_image": "移除背景图片",
+                "card_bg_settings": "卡片区域背景设置",
+                "card_bg_enabled": "启用卡片背景",
+                "card_theme_opacity": "主题色透明度",
+                "card_bg_image": "背景图片",
+                "card_bg_image_opacity": "背景图片透明度",
+                
+                "card_bg_strategy": "背景策略"
             },
             "en": {
                "window_title": "Favorites Manager",
@@ -579,7 +568,7 @@ class MainWindow(QMainWindow):
                 "theme_color": "Theme Color",
                 "select_color": "Choose Color",
                 "about_title": "About",
-                "version": "Version: v0.0.4-beta",
+                "version": "Version: v0.1.0-beta",
                 "open_source": "Open Source",
                 "language_title": "Language",
                 "chinese": "Simplified Chinese",
@@ -661,8 +650,39 @@ class MainWindow(QMainWindow):
                 "cover_label": "Cover:",
                 "cover_url_placeholder": "Cover URL or local path",
                 "select_cover": "Select Cover",
+                "select_cover_hint": "Select local image file as cover",
+                "browse_files": "Browse Files",
+                "no_file_selected": "No file selected",
+                "local_file": "Local File",
+                "preset_cover": "Preset Cover",
+                "confirm": "Confirm",
+                "cancel": "Cancel",
+                "summary_label": "Summary:",
+                "summary_placeholder": "Enter summary...",
+                "ai_summary_btn": "AI Generate Summary",
+                "ai_generating": "AI generating...",
                 "error": "Error",
-                "download_failed": "Download failed: "
+                "download_failed": "Download failed: ",
+                "bg_settings": "Main Background",
+                "main_theme_opacity": "Theme Color Opacity",
+                "main_bg_image": "Background Image",
+                "main_bg_image_opacity": "Background Image Opacity",
+                
+                "main_bg_strategy": "Background Strategy",
+                "bg_stretch": "Stretch",
+                "bg_tile": "Tile",
+                "bg_center": "Center",
+                "bg_fill": "Fill",
+                "bg_fit": "Fit",
+                "select_bg_image": "Select Background Image",
+                "remove_bg_image": "Remove Background Image",
+                "card_bg_settings": "Card Area Background",
+                "card_bg_enabled": "Enable Card Background",
+                "card_theme_opacity": "Theme Color Opacity",
+                "card_bg_image": "Background Image",
+                "card_bg_image_opacity": "Background Image Opacity",
+                
+                "card_bg_strategy": "Background Strategy"
             }
         }
 
@@ -717,6 +737,14 @@ class MainWindow(QMainWindow):
 <li>右键点击收藏夹可进行重命名或删除操作</li>
 <li>使用顶部搜索框可快速查找收藏夹</li>
 <li>点击右下角"+"按钮可添加新收藏夹</li>
+</ul>
+<p><strong>设置说明：</strong></p>
+<ul>
+<li>点击左上角菜单按钮打开设置侧边栏</li>
+<li>设置包含显示设置和语言设置</li>
+<li>语言设置：支持中文和英文切换</li>
+<li>主题设置：支持深色和浅色模式切换</li>
+<li>背景管理：可设置大背景和卡片区域背景的颜色或图片</li>
 </ul>""",
                 "items": """<h3>收藏项列表</h3>
 <p>这里显示选中收藏夹中的所有收藏项。</p>
@@ -727,6 +755,13 @@ class MainWindow(QMainWindow):
 <li>支持批量选择模式（Ctrl+点击多选）</li>
 <li>使用分类筛选可过滤显示特定类型的收藏项</li>
 <li>点击左上角"←"按钮返回收藏夹列表</li>
+</ul>
+<p><strong>摘要功能：</strong></p>
+<ul>
+<li>每个收藏项卡片下方有"打开摘要"按钮</li>
+<li>点击按钮可展开查看该收藏项的摘要内容</li>
+<li>摘要内容过多时支持滚动浏览</li>
+<li>再次点击"收起摘要"按钮可关闭摘要面板</li>
 </ul>""",
                 "add_item": """<h3>添加收藏项</h3>
 <p>在此页面添加新的收藏项。</p>
@@ -735,12 +770,53 @@ class MainWindow(QMainWindow):
 <li>输入网址链接</li>
 <li>可选输入标题和分类</li>
 <li>点击"自动获取"可自动填充标题和分类</li>
+<li>支持主流网站封面自动获取（bilibili、抖音、YouTube、小红书等）</li>
 </ul>
 <p><strong>添加文件：</strong></p>
 <ul>
 <li>点击浏览按钮选择文件</li>
 <li>或直接拖拽文件到指定区域</li>
 <li>文件标题会自动填充</li>
+</ul>
+<p><strong>摘要设置：</strong></p>
+<ul>
+<li>在摘要输入框中手动输入收藏项的摘要内容</li>
+<li>对于本地文件，点击"AI生成摘要"按钮可自动生成摘要</li>
+<li>AI摘要使用本地Qwen2.5模型，支持流式输出</li>
+<li>AI生成内容会自动对应当前应用语言</li>
+</ul>
+<p><strong>封面设置：</strong></p>
+<ul>
+<li>点击"选择封面"按钮可设置收藏项封面</li>
+<li>支持从网络图片、本地图片或预设封面中选择</li>
+<li>预设封面包含文档、图片、视频、音乐等16种类型</li>
+<li>封面支持主题色适配</li>
+</ul>""",
+                "settings": """<h3>设置</h3>
+<p>在此页面配置应用的各项设置。</p>
+<p><strong>基础设置：</strong></p>
+<ul>
+<li>语言设置：支持中文和英文切换</li>
+<li>主题设置：支持深色和浅色模式切换</li>
+<li>主题色设置：可自定义应用主题颜色</li>
+</ul>
+<p><strong>背景管理：</strong></p>
+<ul>
+<li>大背景设置：可设置应用整体背景颜色或图片</li>
+<li>大背景透明度：调整背景颜色的透明度（默认60%）</li>
+<li>大背景图片：可选择本地图片作为背景</li>
+<li>大背景图片透明度：调整背景图片的透明度</li>
+<li>卡片区域背景设置：可设置卡片展示区域的背景颜色或图片</li>
+<li>卡片区域透明度：调整卡片区域背景颜色的透明度（默认40%）</li>
+<li>背景策略：支持拉伸、平铺、居中、填充、适应等模式</li>
+</ul>
+<p><strong>AI设置：</strong></p>
+<ul>
+<li>API地址：设置AI模型的API地址</li>
+<li>API密钥：输入AI服务的访问密钥</li>
+<li>模型选择：选择使用的AI模型</li>
+<li>温度设置：调整AI生成内容的随机性</li>
+<li>最大token数：限制AI生成内容的长度</li>
 </ul>"""
             },
             "en": {
@@ -752,6 +828,14 @@ class MainWindow(QMainWindow):
 <li>Right-click a folder to rename or delete</li>
 <li>Use the search box to find folders quickly</li>
 <li>Click the "+" button to add a new folder</li>
+</ul>
+<p><strong>Settings:</strong></p>
+<ul>
+<li>Click the menu button in the top-left corner to open settings sidebar</li>
+<li>Settings include Display Settings and Language Settings</li>
+<li>Language: Switch between Chinese and English</li>
+<li>Theme: Switch between dark and light mode</li>
+<li>Background Management: Set main background and card area background color or image</li>
 </ul>""",
                 "items": """<h3>Item List</h3>
 <p>This shows all items in the selected folder.</p>
@@ -762,6 +846,13 @@ class MainWindow(QMainWindow):
 <li>Supports multi-select mode (Ctrl+click)</li>
 <li>Use category filter to show specific types</li>
 <li>Click the "←" button to return to folder list</li>
+</ul>
+<p><strong>Summary Feature:</strong></p>
+<ul>
+<li>Each item card has an "Open Summary" button at the bottom</li>
+<li>Click to expand and view the item's summary</li>
+<li>Scrollable when summary content is too long</li>
+<li>Click "Close Summary" button to collapse the panel</li>
 </ul>""",
                 "add_item": """<h3>Add Item</h3>
 <p>Add new items here.</p>
@@ -770,12 +861,53 @@ class MainWindow(QMainWindow):
 <li>Enter URL</li>
 <li>Optional: enter title and category</li>
 <li>Click "Auto Fetch" to fill title and category automatically</li>
+<li>Supports auto cover fetching from mainstream websites (Bilibili, Douyin, YouTube, Xiaohongshu, etc.)</li>
 </ul>
 <p><strong>Add File:</strong></p>
 <ul>
 <li>Click browse button to select file</li>
 <li>Or drag file to the drop area</li>
 <li>File title is auto-filled</li>
+</ul>
+<p><strong>Summary Settings:</strong></p>
+<ul>
+<li>Manually enter summary content in the summary input box</li>
+<li>For local files, click "AI Generate Summary" to auto-generate</li>
+<li>AI summary uses local Qwen2.5 model with streaming output</li>
+<li>AI-generated content automatically matches current app language</li>
+</ul>
+<p><strong>Cover Settings:</strong></p>
+<ul>
+<li>Click "Select Cover" to set item cover</li>
+<li>Supports web images, local images, or preset covers</li>
+<li>16 preset cover types including document, image, video, music, etc.</li>
+<li>Covers support theme color adaptation</li>
+</ul>""",
+                "settings": """<h3>Settings</h3>
+<p>Configure various app settings here.</p>
+<p><strong>Basic Settings:</strong></p>
+<ul>
+<li>Language: Switch between Chinese and English</li>
+<li>Theme: Switch between dark and light mode</li>
+<li>Theme Color: Customize the app theme color</li>
+</ul>
+<p><strong>Background Management:</strong></p>
+<ul>
+<li>Main Background: Set app overall background color or image</li>
+<li>Main Background Opacity: Adjust background color opacity (default 60%)</li>
+<li>Main Background Image: Select local image as background</li>
+<li>Main Background Image Opacity: Adjust background image opacity</li>
+<li>Card Area Background: Set card display area background color or image</li>
+<li>Card Area Opacity: Adjust card area background opacity (default 40%)</li>
+<li>Background Strategy: Support stretch, tile, center, fill, fit modes</li>
+</ul>
+<p><strong>AI Settings:</strong></p>
+<ul>
+<li>API Address: Set AI model API address</li>
+<li>API Key: Enter AI service access key</li>
+<li>Model Selection: Select AI model to use</li>
+<li>Temperature: Adjust randomness of AI-generated content</li>
+<li>Max Tokens: Limit length of AI-generated content</li>
 </ul>"""
             }
         }
@@ -792,12 +924,17 @@ class MainWindow(QMainWindow):
         toast.show_message(message)
 
     def load_config(self):
-        """加载配置文件，返回包含 language, theme_color, dark_mode 的字典"""
+        """加载配置文件，返回包含 language, theme_color, dark_mode 和背景设置的字典"""
         config_path = "config.json"
         default_config = {
             "language": "zh",
             "theme_color": "#0078d7",
-            "dark_mode": False
+            "dark_mode": False,
+            "theme_opacity": 0.4,
+            "bg_image_path": "",
+            "bg_image_opacity": 0.5,
+            
+            "bg_strategy": "stretch"
         }
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -806,8 +943,11 @@ class MainWindow(QMainWindow):
                 for key in default_config:
                     if key not in data:
                         data[key] = default_config[key]
+                # 加载背景设置
+                background_manager.load_config(data)
                 return data
         except (FileNotFoundError, json.JSONDecodeError):
+            background_manager.load_config(default_config)
             return default_config
 
     # ---------- 帮助按钮和侧边栏相关方法 ----------
@@ -868,6 +1008,23 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, 'help_btn'):
             self._update_help_button_position()
+
+    def paintEvent(self, event):
+        """重写paintEvent来渲染背景"""
+        super().paintEvent(event)
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # 使用背景管理器渲染大背景
+        background_manager.render_main_background(
+            painter,
+            self.rect(),
+            MainWindow.current_theme_color,
+            MainWindow.current_dark_mode
+        )
+        
+        painter.end()
 
     def open_help(self):
         """打开帮助侧边栏"""
@@ -1075,6 +1232,7 @@ class MainWindow(QMainWindow):
                 border-bottom: 1px solid #ddd;
                 background-color: transparent;
                 font-size: 14px;
+                qproperty-iconAlignment: AlignLeft;
             }
             QPushButton:hover {
                 background-color: #e0e0e0;
@@ -1089,29 +1247,111 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("padding: 16px 20px; font-size: 18px; font-weight: bold; border-bottom: 2px solid #ccc;")
         layout.addWidget(title)
 
-        # 选项按钮
+        # 选项按钮（带箭头）
         btn_display = QPushButton(self.strings[self.current_lang]["display_settings"])
-        btn_display.clicked.connect(self.on_display_settings_clicked)
+        btn_display.setIcon(QIcon(resource_path("resources/icons/arrow_left.svg")))
+        btn_display.setIconSize(QSize(16, 16))
+        btn_display.setObjectName("settings_menu_btn")
+        btn_display.clicked.connect(lambda: self.on_settings_menu_btn_clicked(btn_display, "display"))
         layout.addWidget(btn_display)
 
         btn_language = QPushButton(self.strings[self.current_lang]["language"])
-        btn_language.clicked.connect(self.on_language_settings_clicked)
+        btn_language.setIcon(QIcon(resource_path("resources/icons/arrow_left.svg")))
+        btn_language.setIconSize(QSize(16, 16))
+        btn_language.setObjectName("settings_menu_btn")
+        btn_language.clicked.connect(lambda: self.on_settings_menu_btn_clicked(btn_language, "language"))
         layout.addWidget(btn_language)
 
         btn_about = QPushButton(self.strings[self.current_lang]["about"])
-        btn_about.clicked.connect(self.on_about_settings_clicked)
+        btn_about.setIcon(QIcon(resource_path("resources/icons/arrow_left.svg")))
+        btn_about.setIconSize(QSize(16, 16))
+        btn_about.setObjectName("settings_menu_btn")
+        btn_about.clicked.connect(lambda: self.on_settings_menu_btn_clicked(btn_about, "about"))
         layout.addWidget(btn_about)
+
+        # 保存按钮引用用于动画控制
+        self.settings_menu_btns = {
+            "display": btn_display,
+            "language": btn_language,
+            "about": btn_about
+        }
 
         layout.addStretch()
         return sidebar
 
+    def on_settings_menu_btn_clicked(self, btn, option_name):
+        """处理设置菜单按钮点击（包含箭头动画）"""
+        # 如果当前有子侧边栏
+        if len(self.settings_sidebars) >= 2:
+            current_sub = self.settings_sidebars[-1]
+            if current_sub.property("option_name") == option_name:
+                # 相同选项：收回动画，箭头旋转回左
+                self._rotate_button_icon(btn, 0)  # 旋转回0度（左箭头）
+                self.remove_last_sidebar()
+                return
+            else:
+                # 不同选项：直接关闭当前子，不保留动画
+                current_sub.close()
+                self.settings_sidebars.pop()
+                for anim in self.settings_animations:
+                    anim.stop()
+                self.settings_animations.clear()
+                # 重置所有按钮箭头
+                for b in self.settings_menu_btns.values():
+                    self._rotate_button_icon(b, 0)
+
+        # 创建新的子侧边栏，箭头旋转180度（右箭头）
+        self._rotate_button_icon(btn, 180)
+        self.toggle_sub_sidebar(option_name)
+
+    def _rotate_button_icon(self, btn, angle):
+        """旋转按钮图标"""
+        icon_path = resource_path("resources/icons/arrow_left.svg")
+        if not os.path.exists(icon_path):
+            return
+        
+        pixmap = QPixmap(icon_path)
+        if pixmap.isNull():
+            return
+        
+        # 获取当前旋转角度
+        start_angle = btn._current_rotation if hasattr(btn, '_current_rotation') else 0
+        end_angle = angle
+        
+        # 如果已经是目标角度，直接设置
+        if start_angle == end_angle:
+            return
+        
+        btn._current_rotation = end_angle
+        
+        # 创建动画
+        step = 10  # 每次旋转的角度
+        steps = abs(end_angle - start_angle) // step
+        if steps == 0:
+            steps = 1
+        
+        def rotate_step(current_step):
+            if current_step > steps:
+                return
+            current_angle = start_angle + (end_angle - start_angle) * (current_step / steps)
+            transform = QTransform().rotate(current_angle)
+            rotated_pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+            btn.setIcon(QIcon(rotated_pixmap))
+            QTimer.singleShot(10, lambda: rotate_step(current_step + 1))
+        
+        rotate_step(0)
+
     def on_display_settings_clicked(self):
-        """处理点击“显示设置”"""
-        self.toggle_sub_sidebar("display")
+        """处理点击“显示设置”（兼容旧调用）"""
+        btn = self.settings_menu_btns.get("display")
+        if btn:
+            self.on_settings_menu_btn_clicked(btn, "display")
 
     def on_about_settings_clicked(self):
-        """处理点击“关于”"""
-        self.toggle_sub_sidebar("about")
+        """处理点击“关于”（兼容旧调用）"""
+        btn = self.settings_menu_btns.get("about")
+        if btn:
+            self.on_settings_menu_btn_clicked(btn, "about")
 
     def toggle_sub_sidebar(self, option_name):
         # 如果当前有子侧边栏
@@ -1162,28 +1402,89 @@ class MainWindow(QMainWindow):
     def create_display_sidebar(self):
         sidebar = QWidget(self)
         sidebar.setFixedWidth(280)
-        sidebar.setStyleSheet("""
-            QWidget {
-                background-color: #ffffff;
-                border-left: 1px solid #ccc;
-            }
-            QLabel {
+        
+        dark = MainWindow.current_dark_mode
+        bg_color = "#2b2b2b" if dark else "#ffffff"
+        text_color = "#ffffff" if dark else "#333333"
+        border_color = "#555555" if dark else "#cccccc"
+        alt_bg = "#3c3c3c" if dark else "#f5f5f5"
+        
+        sidebar.setStyleSheet(f"""
+            QWidget {{
+                background-color: {bg_color};
+                border-left: 1px solid {border_color};
+            }}
+            QLabel {{
                 padding: 8px 16px;
-            }
-            QComboBox, QPushButton {
+                color: {text_color};
+            }}
+            QComboBox, QPushButton {{
                 margin: 4px 16px;
                 padding: 6px;
-                border: 1px solid #ccc;
+                border: 1px solid {border_color};
                 border-radius: 4px;
-                background-color: white;
-            }
-            QPushButton:hover {
-                background-color: #f0f0f0;
-            }
+                background-color: {alt_bg};
+                color: {text_color};
+            }}
+            QPushButton:hover {{
+                background-color: rgba(0,0,0,0.1);
+            }}
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
+            }}
+            QScrollBar:vertical {{
+                width: 6px;
+                background-color: {alt_bg};
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {border_color};
+                border-radius: 3px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: #888;
+            }}
+            QCheckBox {{
+                margin: 4px 16px;
+                color: {text_color};
+            }}
+            QSlider::groove:horizontal {{
+                height: 4px;
+                background: {border_color};
+                border-radius: 2px;
+                margin: 4px 16px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {MainWindow.current_theme_color.name()};
+                width: 14px;
+                height: 14px;
+                border-radius: 7px;
+                margin: -5px 0;
+            }}
+            QLineEdit {{
+                margin: 4px 16px;
+                padding: 4px 6px;
+                border: 1px solid {border_color};
+                border-radius: 3px;
+                background-color: {alt_bg};
+                color: {text_color};
+                font-size: 12px;
+                max-width: 50px;
+            }}
         """)
-        layout = QVBoxLayout(sidebar)
+        
+        # 创建滚动区域
+        scroll_area = QScrollArea(sidebar)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        # 创建内容区域
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
+        
+        scroll_area.setWidget(content_widget)
 
         # 标题（带返回指示）
         title = QLabel(self.strings[self.current_lang]["display_title"])
@@ -1215,7 +1516,160 @@ class MainWindow(QMainWindow):
         layout.addWidget(color_preview)
         layout.addWidget(color_btn)
 
+        # 背景设置分隔线
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("margin: 10px 16px; color: #ddd;")
+        layout.addWidget(separator)
+
+        # ===== 大背景设置 =====
+        bg_title = QLabel(self.strings[self.current_lang]["bg_settings"])
+        bg_title.setStyleSheet("padding: 8px 16px; font-size: 14px; font-weight: bold;")
+        layout.addWidget(bg_title)
+
+        # 大背景主题色透明度
+        layout.addWidget(QLabel(self.strings[self.current_lang]["main_theme_opacity"]))
+        main_opacity_row = QHBoxLayout()
+        self.main_theme_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.main_theme_opacity_slider.setRange(0, 100)
+        self.main_theme_opacity_slider.setValue(int(background_manager.main_theme_opacity * 100))
+        self.main_theme_opacity_slider.setFixedWidth(180)
+        self.main_theme_opacity_slider.valueChanged.connect(self.on_main_theme_opacity_changed)
+        
+        self.main_theme_opacity_edit = QLineEdit()
+        self.main_theme_opacity_edit.setText(f"{int(background_manager.main_theme_opacity * 100)}")
+        self.main_theme_opacity_edit.setFixedWidth(50)
+        self.main_theme_opacity_edit.editingFinished.connect(self.on_main_theme_opacity_edit_finished)
+        
+        main_opacity_row.addWidget(self.main_theme_opacity_slider)
+        main_opacity_row.addWidget(self.main_theme_opacity_edit)
+        layout.addLayout(main_opacity_row)
+
+        # 大背景图片选择
+        layout.addWidget(QLabel(self.strings[self.current_lang]["main_bg_image"]))
+        main_bg_image_row = QHBoxLayout()
+        self.main_bg_image_btn = QPushButton(self.strings[self.current_lang]["select_bg_image"])
+        self.main_bg_image_btn.clicked.connect(self.on_select_main_bg_image_clicked)
+        main_bg_image_row.addWidget(self.main_bg_image_btn)
+        
+        if background_manager.main_bg_image_path:
+            self.remove_main_bg_btn = QPushButton(self.strings[self.current_lang]["remove_bg_image"])
+            self.remove_main_bg_btn.clicked.connect(self.on_remove_main_bg_image_clicked)
+            main_bg_image_row.addWidget(self.remove_main_bg_btn)
+        layout.addLayout(main_bg_image_row)
+
+        # 大背景图片透明度
+        layout.addWidget(QLabel(self.strings[self.current_lang]["main_bg_image_opacity"]))
+        main_bg_opacity_row = QHBoxLayout()
+        self.main_bg_image_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.main_bg_image_opacity_slider.setRange(0, 100)
+        self.main_bg_image_opacity_slider.setValue(int(background_manager.main_bg_image_opacity * 100))
+        self.main_bg_image_opacity_slider.setFixedWidth(180)
+        self.main_bg_image_opacity_slider.valueChanged.connect(self.on_main_bg_image_opacity_changed)
+        
+        self.main_bg_image_opacity_edit = QLineEdit()
+        self.main_bg_image_opacity_edit.setText(f"{int(background_manager.main_bg_image_opacity * 100)}")
+        self.main_bg_image_opacity_edit.setFixedWidth(50)
+        self.main_bg_image_opacity_edit.editingFinished.connect(self.on_main_bg_image_opacity_edit_finished)
+        
+        main_bg_opacity_row.addWidget(self.main_bg_image_opacity_slider)
+        main_bg_opacity_row.addWidget(self.main_bg_image_opacity_edit)
+        layout.addLayout(main_bg_opacity_row)
+
+        # 大背景策略
+        layout.addWidget(QLabel(self.strings[self.current_lang]["main_bg_strategy"]))
+        self.main_bg_strategy_combo = QComboBox()
+        strategies = [
+            ("stretch", self.strings[self.current_lang]["bg_stretch"]),
+            ("tile", self.strings[self.current_lang]["bg_tile"]),
+            ("center", self.strings[self.current_lang]["bg_center"]),
+            ("fill", self.strings[self.current_lang]["bg_fill"]),
+            ("fit", self.strings[self.current_lang]["bg_fit"])
+        ]
+        for key, label in strategies:
+            self.main_bg_strategy_combo.addItem(label, key)
+            if key == background_manager.main_bg_strategy:
+                self.main_bg_strategy_combo.setCurrentText(label)
+        self.main_bg_strategy_combo.currentIndexChanged.connect(self.on_main_bg_strategy_changed)
+        layout.addWidget(self.main_bg_strategy_combo)
+
+        # ===== 卡片区域背景设置 =====
+        card_separator = QFrame()
+        card_separator.setFrameShape(QFrame.Shape.HLine)
+        card_separator.setStyleSheet("margin: 10px 16px; color: #ddd;")
+        layout.addWidget(card_separator)
+
+        card_bg_title = QLabel(self.strings[self.current_lang]["card_bg_settings"])
+        card_bg_title.setStyleSheet("padding: 8px 16px; font-size: 14px; font-weight: bold;")
+        layout.addWidget(card_bg_title)
+
+        # 卡片区域主题色透明度
+        layout.addWidget(QLabel(self.strings[self.current_lang]["card_theme_opacity"]))
+        card_opacity_row = QHBoxLayout()
+        self.card_theme_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.card_theme_opacity_slider.setRange(0, 100)
+        self.card_theme_opacity_slider.setValue(int(background_manager.card_theme_opacity * 100))
+        self.card_theme_opacity_slider.setFixedWidth(180)
+        self.card_theme_opacity_slider.valueChanged.connect(self.on_card_theme_opacity_changed)
+        
+        self.card_theme_opacity_edit = QLineEdit()
+        self.card_theme_opacity_edit.setText(f"{int(background_manager.card_theme_opacity * 100)}")
+        self.card_theme_opacity_edit.setFixedWidth(50)
+        self.card_theme_opacity_edit.editingFinished.connect(self.on_card_theme_opacity_edit_finished)
+        
+        card_opacity_row.addWidget(self.card_theme_opacity_slider)
+        card_opacity_row.addWidget(self.card_theme_opacity_edit)
+        layout.addLayout(card_opacity_row)
+
+        # 卡片区域背景图片选择
+        layout.addWidget(QLabel(self.strings[self.current_lang]["card_bg_image"]))
+        card_bg_image_row = QHBoxLayout()
+        self.card_bg_image_btn = QPushButton(self.strings[self.current_lang]["select_bg_image"])
+        self.card_bg_image_btn.clicked.connect(self.on_select_card_bg_image_clicked)
+        card_bg_image_row.addWidget(self.card_bg_image_btn)
+        
+        if background_manager.card_bg_image_path:
+            self.remove_card_bg_btn = QPushButton(self.strings[self.current_lang]["remove_bg_image"])
+            self.remove_card_bg_btn.clicked.connect(self.on_remove_card_bg_image_clicked)
+            card_bg_image_row.addWidget(self.remove_card_bg_btn)
+        layout.addLayout(card_bg_image_row)
+
+        # 卡片区域背景图片透明度
+        layout.addWidget(QLabel(self.strings[self.current_lang]["card_bg_image_opacity"]))
+        card_bg_opacity_row = QHBoxLayout()
+        self.card_bg_image_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.card_bg_image_opacity_slider.setRange(0, 100)
+        self.card_bg_image_opacity_slider.setValue(int(background_manager.card_bg_image_opacity * 100))
+        self.card_bg_image_opacity_slider.setFixedWidth(180)
+        self.card_bg_image_opacity_slider.valueChanged.connect(self.on_card_bg_image_opacity_changed)
+        
+        self.card_bg_image_opacity_edit = QLineEdit()
+        self.card_bg_image_opacity_edit.setText(f"{int(background_manager.card_bg_image_opacity * 100)}")
+        self.card_bg_image_opacity_edit.setFixedWidth(50)
+        self.card_bg_image_opacity_edit.editingFinished.connect(self.on_card_bg_image_opacity_edit_finished)
+        
+        card_bg_opacity_row.addWidget(self.card_bg_image_opacity_slider)
+        card_bg_opacity_row.addWidget(self.card_bg_image_opacity_edit)
+        layout.addLayout(card_bg_opacity_row)
+
+        # 卡片区域背景策略
+        layout.addWidget(QLabel(self.strings[self.current_lang]["card_bg_strategy"]))
+        self.card_bg_strategy_combo = QComboBox()
+        for key, label in strategies:
+            self.card_bg_strategy_combo.addItem(label, key)
+            if key == background_manager.card_bg_strategy:
+                self.card_bg_strategy_combo.setCurrentText(label)
+        self.card_bg_strategy_combo.currentIndexChanged.connect(self.on_card_bg_strategy_changed)
+        layout.addWidget(self.card_bg_strategy_combo)
+
         layout.addStretch()
+        
+        # 将滚动区域添加到侧边栏
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+        sidebar_layout.addWidget(scroll_area)
+        
         return sidebar
 
     def create_about_sidebar(self):
@@ -1311,6 +1765,186 @@ class MainWindow(QMainWindow):
                     if child.property("color_preview"):
                         child.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #888;")
 
+    # ---------- 大背景设置相关方法 ----------
+    def on_main_theme_opacity_changed(self, value):
+        """大背景主题色透明度滑块变化"""
+        background_manager.main_theme_opacity = value / 100.0
+        self.main_theme_opacity_edit.setText(str(value))
+        self.update_background()
+        self.save_config()
+
+    def on_main_theme_opacity_edit_finished(self):
+        """大背景主题色透明度文本框编辑完成"""
+        try:
+            value = int(self.main_theme_opacity_edit.text())
+            value = max(0, min(100, value))
+            background_manager.main_theme_opacity = value / 100.0
+            self.main_theme_opacity_slider.setValue(value)
+            self.update_background()
+            self.save_config()
+        except ValueError:
+            self.main_theme_opacity_edit.setText(str(int(background_manager.main_theme_opacity * 100)))
+
+    def on_select_main_bg_image_clicked(self):
+        """选择大背景图片"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            self.strings[self.current_lang]["select_bg_image"],
+            "",
+            "Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"
+        )
+        if file_path:
+            background_manager.main_bg_image_path = file_path
+            self.update_background()
+            self.save_config()
+            # 更新UI
+            if hasattr(self, 'remove_main_bg_btn'):
+                self.remove_main_bg_btn.deleteLater()
+            self.remove_main_bg_btn = QPushButton(self.strings[self.current_lang]["remove_bg_image"])
+            self.remove_main_bg_btn.clicked.connect(self.on_remove_main_bg_image_clicked)
+            # 将按钮添加到布局中
+            for sidebar in self.settings_sidebars:
+                for child in sidebar.findChildren(QHBoxLayout):
+                    if self.main_bg_image_btn in [child.itemAt(i).widget() for i in range(child.count())]:
+                        child.addWidget(self.remove_main_bg_btn)
+                        break
+
+    def on_remove_main_bg_image_clicked(self):
+        """移除大背景图片"""
+        background_manager.main_bg_image_path = ""
+        self.update_background()
+        self.save_config()
+        if hasattr(self, 'remove_main_bg_btn'):
+            self.remove_main_bg_btn.deleteLater()
+            delattr(self, 'remove_main_bg_btn')
+
+    def on_main_bg_image_opacity_changed(self, value):
+        """大背景图片透明度滑块变化"""
+        background_manager.main_bg_image_opacity = value / 100.0
+        self.main_bg_image_opacity_edit.setText(str(value))
+        self.update_background()
+        self.save_config()
+
+    def on_main_bg_image_opacity_edit_finished(self):
+        """大背景图片透明度文本框编辑完成"""
+        try:
+            value = int(self.main_bg_image_opacity_edit.text())
+            value = max(0, min(100, value))
+            background_manager.main_bg_image_opacity = value / 100.0
+            self.main_bg_image_opacity_slider.setValue(value)
+            self.update_background()
+            self.save_config()
+        except ValueError:
+            self.main_bg_image_opacity_edit.setText(str(int(background_manager.main_bg_image_opacity * 100)))
+
+    def on_main_bg_strategy_changed(self, index):
+        """大背景策略变化"""
+        strategy = self.main_bg_strategy_combo.currentData()
+        background_manager.main_bg_strategy = strategy
+        self.update_background()
+        self.save_config()
+
+    # ---------- 卡片区域背景设置相关方法 ----------
+    def on_card_bg_enabled_changed(self, state):
+        """卡片区域背景启用状态变化"""
+        background_manager.card_bg_enabled = (state == Qt.CheckState.Checked)
+        self.update_background()
+        self.save_config()
+
+    def on_card_theme_opacity_changed(self, value):
+        """卡片区域主题色透明度滑块变化"""
+        background_manager.card_theme_opacity = value / 100.0
+        self.card_theme_opacity_edit.setText(str(value))
+        self.update_background()
+        self.save_config()
+
+    def on_card_theme_opacity_edit_finished(self):
+        """卡片区域主题色透明度文本框编辑完成"""
+        try:
+            value = int(self.card_theme_opacity_edit.text())
+            value = max(0, min(100, value))
+            background_manager.card_theme_opacity = value / 100.0
+            self.card_theme_opacity_slider.setValue(value)
+            self.update_background()
+            self.save_config()
+        except ValueError:
+            self.card_theme_opacity_edit.setText(str(int(background_manager.card_theme_opacity * 100)))
+
+    def on_select_card_bg_image_clicked(self):
+        """选择卡片区域背景图片"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            self.strings[self.current_lang]["select_bg_image"],
+            "",
+            "Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"
+        )
+        if file_path:
+            background_manager.card_bg_image_path = file_path
+            self.update_background()
+            self.save_config()
+            # 更新UI
+            if hasattr(self, 'remove_card_bg_btn'):
+                self.remove_card_bg_btn.deleteLater()
+            self.remove_card_bg_btn = QPushButton(self.strings[self.current_lang]["remove_bg_image"])
+            self.remove_card_bg_btn.clicked.connect(self.on_remove_card_bg_image_clicked)
+            # 将按钮添加到布局中
+            for sidebar in self.settings_sidebars:
+                for child in sidebar.findChildren(QHBoxLayout):
+                    if self.card_bg_image_btn in [child.itemAt(i).widget() for i in range(child.count())]:
+                        child.addWidget(self.remove_card_bg_btn)
+                        break
+
+    def on_remove_card_bg_image_clicked(self):
+        """移除卡片区域背景图片"""
+        background_manager.card_bg_image_path = ""
+        self.update_background()
+        self.save_config()
+        if hasattr(self, 'remove_card_bg_btn'):
+            self.remove_card_bg_btn.deleteLater()
+            delattr(self, 'remove_card_bg_btn')
+
+    def on_card_bg_image_opacity_changed(self, value):
+        """卡片区域背景图片透明度滑块变化"""
+        background_manager.card_bg_image_opacity = value / 100.0
+        self.card_bg_image_opacity_edit.setText(str(value))
+        self.update_background()
+        self.save_config()
+
+    def on_card_bg_image_opacity_edit_finished(self):
+        """卡片区域背景图片透明度文本框编辑完成"""
+        try:
+            value = int(self.card_bg_image_opacity_edit.text())
+            value = max(0, min(100, value))
+            background_manager.card_bg_image_opacity = value / 100.0
+            self.card_bg_image_opacity_slider.setValue(value)
+            self.update_background()
+            self.save_config()
+        except ValueError:
+            self.card_bg_image_opacity_edit.setText(str(int(background_manager.card_bg_image_opacity * 100)))
+
+    def on_card_bg_strategy_changed(self, index):
+        """卡片区域背景策略变化"""
+        strategy = self.card_bg_strategy_combo.currentData()
+        background_manager.card_bg_strategy = strategy
+        self.update_background()
+        self.save_config()
+
+    def update_background(self):
+        """更新背景"""
+        self.apply_theme()
+        self.update_folder_cards_background()
+        self.update_item_cards_background()
+
+    def update_folder_cards_background(self):
+        """更新收藏夹卡片背景"""
+        for card in self.findChildren(FolderCard):
+            card.update_theme(MainWindow.current_dark_mode)
+
+    def update_item_cards_background(self):
+        """更新收藏项卡片背景"""
+        for card in self.findChildren(ItemCard):
+            card.update_theme(MainWindow.current_dark_mode)
+
     def apply_theme(self):
         color = MainWindow.current_theme_color
         color_str = color.name()
@@ -1321,12 +1955,12 @@ class MainWindow(QMainWindow):
         border_color = "#555" if dark else "#ccc"
         hover_bg = f"{color_str}40"
 
-        # 主窗口
-        self.setStyleSheet(f"QMainWindow {{ background-color: {bg_color}; color: {text_color}; }}")
+        # 主窗口背景设置为透明（自定义背景通过paintEvent渲染）
+        self.setStyleSheet(f"QMainWindow {{ background-color: transparent; color: {text_color}; }}")
 
-        # 三个主要页面（使用 QWidget#page 选择器，避免级联影响子控件）
+        # 三个主要页面设置为透明，让自定义背景显示出来
         for page in (self.folders_page, self.items_page, self.add_item_page):
-            page.setStyleSheet(f"QWidget#page {{ background-color: {bg_color}; color: {text_color}; }}")
+            page.setStyleSheet(f"QWidget#page {{ background-color: transparent; color: {text_color}; }}")
 
         # 搜索框
         search_box_style = f"""
@@ -1391,14 +2025,20 @@ class MainWindow(QMainWindow):
         for card in self.findChildren(ItemCard):
             card.update_theme(dark)
 
+        # 更新卡片展示容器背景（使用背景管理器的设置）
+        def update_container_background(container_name):
+            container = self.findChild(CardContainerWidget, container_name)
+            if container:
+                container.update_background()
+        
+        update_container_background("folders_container")
+        update_container_background("items_container")
+
         # 滚动区域背景
         scroll_style = f"""
             QScrollArea {{
                 background-color: transparent;
                 border: none;
-            }}
-            QScrollArea > QWidget > QWidget {{
-                background-color: {bg_color};
             }}
         """
         for scroll in self.findChildren(QScrollArea):
@@ -1510,6 +2150,9 @@ class MainWindow(QMainWindow):
                 }}
             """
             self.password_sidebar.setStyleSheet(sidebar_style)
+        
+        # 触发主窗口重绘，更新背景
+        self.update()
 
     def save_config(self):
         config_path = "config.json"
@@ -1518,6 +2161,8 @@ class MainWindow(QMainWindow):
             "theme_color": MainWindow.current_theme_color.name(),
             "dark_mode": MainWindow.current_dark_mode
         }
+        # 添加背景设置
+        data.update(background_manager.save_config())
         try:
             with open(config_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1582,7 +2227,9 @@ class MainWindow(QMainWindow):
         for obj_name, placeholder_key in [("folder_search", "folder_search_placeholder"),
                                           ("item_search", "item_search_placeholder"),
                                           ("link_cover_edit", "cover_url_placeholder"),
-                                          ("file_cover_edit", "cover_url_placeholder")]:
+                                          ("file_cover_edit", "cover_url_placeholder"),
+                                          ("link_summary_edit", "summary_placeholder"),
+                                          ("file_summary_edit", "summary_placeholder")]:
             widget = getattr(self, obj_name, None)
             if widget:
                 widget.setPlaceholderText(self.strings[self.current_lang][placeholder_key])
@@ -1610,10 +2257,12 @@ class MainWindow(QMainWindow):
             "label_link_title": "title_label",
             "label_link_category": "category_label",
             "label_link_cover": "cover_label",
+            "label_link_summary": "summary_label",
             "label_file_drop": "file_drop",
             "label_file_title": "title_label",
             "label_file_category": "category_label",
             "label_file_cover": "cover_label",
+            "label_file_summary": "summary_label",
         }
         for obj_name, text_key in label_map.items():
             label = self.findChild(QLabel, obj_name)
@@ -1706,7 +2355,8 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll_widget = QWidget()
+        scroll_widget = CardContainerWidget()
+        scroll_widget.setObjectName("folders_container")
         self.folders_grid_layout = QGridLayout(scroll_widget)
         self.folders_grid_layout.setSpacing(3)
         scroll.setWidget(scroll_widget)
@@ -1742,10 +2392,234 @@ class MainWindow(QMainWindow):
                 widget.setVisible(text in widget.folder_name.lower())
 
     def add_folder_dialog(self):
-        name, ok = QInputDialog.getText(self, self.strings[self.current_lang]["add_folder_dialog_title"], self.strings[self.current_lang]["add_folder_dialog_label"])
-        if ok and name:
+        """打开添加收藏夹侧边栏"""
+        # 如果已经打开，先关闭
+        if hasattr(self, 'add_folder_sidebar') and self.add_folder_sidebar is not None:
+            return
+
+        # 创建遮罩
+        self.add_folder_overlay = QWidget(self)
+        self.add_folder_overlay.setGeometry(0, 0, self.width(), self.height())
+        self.add_folder_overlay.setStyleSheet("background-color: rgba(0,0,0,0.3);")
+        self.add_folder_overlay.mousePressEvent = lambda e: self.close_add_folder_sidebar()
+        self.add_folder_overlay.raise_()
+        self.add_folder_overlay.show()
+
+        # 创建侧边栏
+        sidebar = self.create_add_folder_sidebar()
+        sidebar.setParent(self)
+        sidebar.setFixedWidth(300)
+        sidebar.setGeometry(self.width(), 0, 300, self.height())
+        sidebar.raise_()
+        sidebar.show()
+
+        self.add_folder_sidebar = sidebar
+
+        # 侧边栏移入动画（存储为实例变量防止垃圾回收）
+        self.add_folder_open_anim = QPropertyAnimation(sidebar, b"geometry")
+        self.add_folder_open_anim.setDuration(300)
+        self.add_folder_open_anim.setStartValue(QRect(self.width(), 0, 300, self.height()))
+        self.add_folder_open_anim.setEndValue(QRect(self.width() - 300, 0, 300, self.height()))
+        self.add_folder_open_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.add_folder_open_anim.start()
+
+    def create_add_folder_sidebar(self):
+        """创建添加收藏夹侧边栏"""
+        sidebar = QWidget(self)
+        
+        dark = MainWindow.current_dark_mode
+        bg_color = "#2b2b2b" if dark else "#ffffff"
+        text_color = "#ffffff" if dark else "#333333"
+        border_color = "#555555" if dark else "#cccccc"
+        alt_bg = "#3c3c3c" if dark else "#f5f5f5"
+        color_str = MainWindow.current_theme_color.name()
+        
+        sidebar.setStyleSheet(f"""
+            QWidget#add_folder_sidebar {{
+                background-color: {bg_color};
+                color: {text_color};
+                border-left: 1px solid {border_color};
+            }}
+            QLabel {{
+                color: {text_color};
+            }}
+            QLineEdit {{
+                border: 1px solid {border_color};
+                border-radius: 4px;
+                padding: 8px;
+                margin: 4px 16px;
+                background-color: {alt_bg};
+                color: {text_color};
+            }}
+            QLineEdit:focus {{
+                border-color: {color_str};
+            }}
+            QPushButton {{
+                margin: 4px 16px;
+                padding: 8px;
+                border-radius: 4px;
+                font-size: 14px;
+                border: none;
+            }}
+        """)
+        sidebar.setObjectName("add_folder_sidebar")
+
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # 标题栏
+        header = QWidget()
+        header.setStyleSheet(f"background-color: {alt_bg}; border-bottom: 1px solid {border_color};")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 12, 16, 12)
+        header_layout.setSpacing(10)
+
+        # 关闭按钮
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                font-size: 18px;
+                color: {text_color};
+            }}
+            QPushButton:hover {{
+                background-color: rgba(0,0,0,0.1);
+                border-radius: 50%;
+            }}
+        """)
+        close_btn.clicked.connect(self.close_add_folder_sidebar)
+
+        # 标题
+        title = QLabel(self.strings[self.current_lang]["add_folder_dialog_title"])
+        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+
+        header_layout.addWidget(close_btn)
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        layout.addWidget(header)
+
+        # 输入区域
+        input_area = QWidget()
+        input_layout = QVBoxLayout(input_area)
+        input_layout.setContentsMargins(16, 24, 16, 24)
+        input_layout.setSpacing(16)
+
+        # 标签
+        label = QLabel(self.strings[self.current_lang]["add_folder_dialog_label"])
+        label.setStyleSheet("font-size: 14px;")
+        input_layout.addWidget(label)
+
+        # 输入框
+        self.folder_name_edit = QLineEdit()
+        self.folder_name_edit.setPlaceholderText(self.strings[self.current_lang]["new_folder_name"])
+        self.folder_name_edit.setStyleSheet(f"""
+            QLineEdit {{
+                border: 1px solid {border_color};
+                border-radius: 4px;
+                padding: 10px 12px;
+                margin: 0;
+                background-color: {alt_bg};
+                color: {text_color};
+                font-size: 14px;
+            }}
+            QLineEdit:focus {{
+                border-color: {color_str};
+                outline: none;
+            }}
+        """)
+        input_layout.addWidget(self.folder_name_edit)
+
+        # 按钮区域
+        button_layout = QVBoxLayout()
+        button_layout.setSpacing(8)
+
+        # 确定按钮（主题色，与全局按钮样式一致）
+        confirm_btn = QPushButton(self.strings[self.current_lang]["confirm"])
+        confirm_btn.setStyleSheet(f"""
+            QPushButton {{
+                border: 2px solid {color_str};
+                border-radius: 4px;
+                padding: 8px 16px;
+                background-color: {color_str};
+                color: {text_color};
+                font-size: 14px;
+                margin: 0;
+            }}
+            QPushButton:hover {{
+                background-color: {color_str}80;
+            }}
+        """)
+        confirm_btn.clicked.connect(self.on_add_folder_confirm)
+        button_layout.addWidget(confirm_btn)
+
+        # 取消按钮（与全局按钮样式一致）
+        cancel_btn = QPushButton(self.strings[self.current_lang]["cancel"])
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                border: 2px solid {color_str};
+                border-radius: 4px;
+                padding: 8px 16px;
+                background-color: {color_str};
+                color: {text_color};
+                font-size: 14px;
+                margin: 0;
+            }}
+            QPushButton:hover {{
+                background-color: {color_str}80;
+            }}
+        """)
+        cancel_btn.clicked.connect(self.close_add_folder_sidebar)
+        button_layout.addWidget(cancel_btn)
+
+        input_layout.addLayout(button_layout)
+        layout.addWidget(input_area)
+        layout.addStretch()
+
+        # 设置输入框焦点
+        QTimer.singleShot(100, self.folder_name_edit.setFocus)
+
+        return sidebar
+
+    def close_add_folder_sidebar(self):
+        """关闭添加收藏夹侧边栏"""
+        if not hasattr(self, 'add_folder_sidebar') or self.add_folder_sidebar is None:
+            return
+
+        sidebar = self.add_folder_sidebar
+        overlay = self.add_folder_overlay
+        
+        # 侧边栏移出动画（存储为实例变量防止垃圾回收）
+        self.add_folder_close_anim = QPropertyAnimation(sidebar, b"geometry")
+        self.add_folder_close_anim.setDuration(300)
+        self.add_folder_close_anim.setStartValue(QRect(self.width() - 300, 0, 300, self.height()))
+        self.add_folder_close_anim.setEndValue(QRect(self.width(), 0, 300, self.height()))
+        self.add_folder_close_anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        self.add_folder_close_anim.finished.connect(lambda: self._cleanup_add_folder_sidebar(sidebar, overlay))
+        self.add_folder_close_anim.start()
+
+    def _cleanup_add_folder_sidebar(self, sidebar=None, overlay=None):
+        """清理添加收藏夹侧边栏"""
+        if sidebar:
+            sidebar.deleteLater()
+        if hasattr(self, 'add_folder_sidebar'):
+            self.add_folder_sidebar = None
+            
+        if overlay:
+            overlay.deleteLater()
+        if hasattr(self, 'add_folder_overlay'):
+            self.add_folder_overlay = None
+
+    def on_add_folder_confirm(self):
+        """确认添加收藏夹"""
+        name = self.folder_name_edit.text().strip()
+        if name:
             self.db.add_folder(name)
-            self.load_folders()
+            # 强制刷新页面
+            QTimer.singleShot(0, self.load_folders)
+            self.close_add_folder_sidebar()
 
     def open_folder(self, folder_id, folder_name):
         pwd_hash = self.db.get_folder_password_hash(folder_id)
@@ -1836,7 +2710,8 @@ class MainWindow(QMainWindow):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll_widget = QWidget()
+        scroll_widget = CardContainerWidget()
+        scroll_widget.setObjectName("items_container")
         self.items_grid_layout = QGridLayout(scroll_widget)
         self.items_grid_layout.setSpacing(15)
         scroll.setWidget(scroll_widget)
@@ -1863,9 +2738,11 @@ class MainWindow(QMainWindow):
                 widget.deleteLater()
         items = self.db.get_items_by_folder(folder_id)
         row, col = 0, 0
-        for item_id, item_type, title, url, category, cover_path, pwd_hash in items:
+        for item_data in items:
+            item_id, item_type, title, url, category, cover_path, pwd_hash = item_data[:7]
+            summary = item_data[7] if len(item_data) > 7 else ""
             has_password = pwd_hash is not None
-            card = ItemCard(item_id, title, cover_path, category, has_password, url, self.current_lang)
+            card = ItemCard(item_id, title, cover_path, category, has_password, url, self.current_lang, summary)
             card.clicked.connect(lambda _, iid=item_id: self.open_item_by_id(iid))
             card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             card.customContextMenuRequested.connect(
@@ -1896,10 +2773,10 @@ class MainWindow(QMainWindow):
 
     def open_item_by_id(self, item_id):
         # 从数据库获取该条目的信息（需要新增方法 get_item_by_id）
-        item = self.db.get_item_by_id(item_id)  # 返回 (item_type, title, url, category, cover_path, password_hash)
+        item = self.db.get_item_by_id(item_id)  # 返回 (item_type, title, url, category, cover_path, password_hash, summary)
         if item is None:
             return
-        item_type, title, url, category, cover_path, pwd_hash = item
+        item_type, title, url, category, cover_path, pwd_hash = item[:6]
         if pwd_hash is not None:
             self.show_password_input('item', item_id,
                                      lambda: self._open_item_after_verify(url, item_type))
@@ -1963,20 +2840,26 @@ class MainWindow(QMainWindow):
     def edit_item(self, item_id, title, url, category, item_type):
         self.editing_item_id = item_id
         self.editing_item_type = item_type
+        item_data = self.db.get_item_by_id(item_id)
+        summary = item_data[6] if item_data and len(item_data) > 6 else ""
         self.open_add_item_page()
-        QTimer.singleShot(50, lambda: self.populate_edit_form(title, url, category, item_type))
+        QTimer.singleShot(50, lambda: self.populate_edit_form(title, url, category, item_type, summary))
 
-    def populate_edit_form(self, title, url, category, item_type):
+    def populate_edit_form(self, title, url, category, item_type, summary=""):
         if item_type == "link":
             self.item_type_combo.setCurrentIndex(0)
             self.link_url_edit.setText(url)
             self.link_title_edit.setText(title)
             self.link_category_edit.setText(category)
+            if hasattr(self, 'link_summary_edit'):
+                self.link_summary_edit.setPlainText(summary)
         else:
             self.item_type_combo.setCurrentIndex(1)
             self.dropped_file_path = url
             self.file_title_edit.setText(title)
             self.file_category_edit.setText(category)
+            if hasattr(self, 'file_summary_edit'):
+                self.file_summary_edit.setPlainText(summary)
             if os.path.exists(url):
                 self.drop_area.setText(self.strings[self.current_lang]["file_selected_prefix"] + os.path.basename(url))
             else:
@@ -2159,6 +3042,15 @@ class MainWindow(QMainWindow):
         link_cover_btn.clicked.connect(self.select_cover_for_item)
         link_layout.addWidget(link_cover_btn)
         
+        link_summary_label = QLabel(self.strings[self.current_lang].get("summary_label", "Summary:"))
+        link_summary_label.setObjectName("label_link_summary")
+        link_layout.addWidget(link_summary_label)
+        self.link_summary_edit = QTextEdit()
+        self.link_summary_edit.setObjectName("link_summary_edit")
+        self.link_summary_edit.setPlaceholderText(self.strings[self.current_lang].get("summary_placeholder", "Enter summary..."))
+        self.link_summary_edit.setMaximumHeight(100)
+        link_layout.addWidget(self.link_summary_edit)
+        
         link_layout.addWidget(auto_btn)
         link_layout.addStretch()
         self.add_item_stack.addWidget(link_widget)
@@ -2199,6 +3091,20 @@ class MainWindow(QMainWindow):
         file_cover_btn.setObjectName("file_cover_btn")
         file_cover_btn.clicked.connect(self.select_cover_for_item)
         file_layout.addWidget(file_cover_btn)
+        
+        file_summary_label = QLabel(self.strings[self.current_lang].get("summary_label", "Summary:"))
+        file_summary_label.setObjectName("label_file_summary")
+        file_layout.addWidget(file_summary_label)
+        self.file_summary_edit = QTextEdit()
+        self.file_summary_edit.setObjectName("file_summary_edit")
+        self.file_summary_edit.setPlaceholderText(self.strings[self.current_lang].get("summary_placeholder", "Enter summary..."))
+        self.file_summary_edit.setMaximumHeight(100)
+        file_layout.addWidget(self.file_summary_edit)
+        
+        self.ai_summary_btn = QPushButton(self.strings[self.current_lang].get("ai_summary_btn", "AI Generate Summary"))
+        self.ai_summary_btn.setObjectName("ai_summary_btn")
+        self.ai_summary_btn.clicked.connect(self.generate_ai_summary)
+        file_layout.addWidget(self.ai_summary_btn)
         
         file_layout.addStretch()
         self.add_item_stack.addWidget(file_widget)
@@ -2339,38 +3245,8 @@ class MainWindow(QMainWindow):
             
             if not is_image_url:
                 try:
-                    from playwright.sync_api import sync_playwright
-                    with sync_playwright() as p:
-                        browser = p.chromium.launch(headless=True, timeout=10000)
-                        context = browser.new_context(
-                            viewport={'width': 800, 'height': 600},
-                            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                        )
-                        page = context.new_page()
-                        
-                        page.goto(cover_path, timeout=8000, wait_until='domcontentloaded')
-                        
-                        og_image = page.evaluate("""() => {
-                            const meta = document.querySelector('meta[property="og:image"]') || 
-                                         document.querySelector('meta[name="og:image"]') ||
-                                         document.querySelector('meta[name="image"]');
-                            return meta ? meta.getAttribute('content') : null;
-                        }""")
-                        
-                        if og_image:
-                            if og_image.startswith('//'):
-                                actual_image_url = f"{parsed.scheme}:{og_image}"
-                            elif og_image.startswith('/'):
-                                actual_image_url = f"{parsed.scheme}://{parsed.netloc}{og_image}"
-                            elif not og_image.startswith(('http://', 'https://')):
-                                from urllib.parse import urljoin
-                                actual_image_url = urljoin(cover_path, og_image)
-                            else:
-                                actual_image_url = og_image
-                        else:
-                            actual_image_url = None
-                        
-                        browser.close()
+                    from cover_extractor import extract_cover
+                    actual_image_url = extract_cover(cover_path)
                     
                     if not actual_image_url:
                         self.show_toast(self.strings[self.current_lang].get("download_failed", "Download failed: ") + "无法从页面中提取封面图片")
@@ -2386,106 +3262,56 @@ class MainWindow(QMainWindow):
                 'Accept-Encoding': 'identity'
             }
             
-            success = False
-            for method in ['requests', 'playwright']:
-                try:
-                    if method == 'requests':
-                        print(f"[DEBUG] Downloading cover from: {actual_image_url}")
-                        response = requests.get(actual_image_url, timeout=8, headers=headers, allow_redirects=True, stream=True, verify=False)
-                        response.raise_for_status()
-                        
-                        temp_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}.tmp")
-                        with open(temp_path, 'wb') as f:
-                            for chunk in response.iter_content(chunk_size=8192):
-                                f.write(chunk)
-                        
-                        from PIL import Image
-                        with Image.open(temp_path) as img:
-                            target_w, target_h = 360, 200
-                            img_w, img_h = img.size
-                            
-                            print(f"[DEBUG] Original image: {img_w}x{img_h}")
-                            
-                            scale_w = target_w / img_w
-                            scale_h = target_h / img_h
-                            scale = max(scale_w, scale_h)
-                            
-                            new_w = max(int(img_w * scale), target_w)
-                            new_h = max(int(img_h * scale), target_h)
-                            
-                            img = img.resize((new_w, new_h), Image.LANCZOS)
-                            print(f"[DEBUG] Resized to: {new_w}x{new_h}")
-                            
-                            left = max(0, (new_w - target_w) // 2)
-                            top = max(0, (new_h - target_h) // 2)
-                            right = min(new_w, left + target_w)
-                            bottom = min(new_h, top + target_h)
-                            
-                            img = img.crop((left, top, right, bottom))
-                            print(f"[DEBUG] Cropped to: {img.size[0]}x{img.size[1]}")
-                            
-                            png_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}.png")
-                            img.save(png_path, 'PNG')
-                        os.remove(temp_path)
-                        cover_path = png_path
-                        print(f"[DEBUG] Cover downloaded and processed successfully")
-                        success = True
-                        break
-                    else:
-                        from playwright.sync_api import sync_playwright
-                        with sync_playwright() as p:
-                            browser = p.chromium.launch(headless=True, timeout=10000)
-                            context = browser.new_context(
-                                viewport={'width': 800, 'height': 600},
-                                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                            )
-                            page = context.new_page()
-                            
-                            page.goto(actual_image_url, timeout=8000, wait_until='domcontentloaded')
-                            
-                            temp_png_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}_temp.png")
-                            page.screenshot(path=temp_png_path, type='png')
-                            
-                            browser.close()
-                            
-                            if os.path.exists(temp_png_path) and os.path.getsize(temp_png_path) > 0:
-                                from PIL import Image
-                                with Image.open(temp_png_path) as img:
-                                    target_w, target_h = 360, 200
-                                    img_w, img_h = img.size
-                                    
-                                    scale_w = target_w / img_w
-                                    scale_h = target_h / img_h
-                                    scale = max(scale_w, scale_h)
-                                    
-                                    new_w = max(int(img_w * scale), target_w)
-                                    new_h = max(int(img_h * scale), target_h)
-                                    
-                                    img = img.resize((new_w, new_h), Image.LANCZOS)
-                                    
-                                    left = max(0, (new_w - target_w) // 2)
-                                    top = max(0, (new_h - target_h) // 2)
-                                    right = min(new_w, left + target_w)
-                                    bottom = min(new_h, top + target_h)
-                                    
-                                    img = img.crop((left, top, right, bottom))
-                                    
-                                    png_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}.png")
-                                    img.save(png_path, 'PNG')
-                                os.remove(temp_png_path)
-                                cover_path = png_path
-                                print(f"[DEBUG] Cover captured with playwright")
-                                success = True
-                                break
-                            else:
-                                raise Exception("截图为空")
-                except Exception as e:
-                    print(f"[DEBUG] Method {method} failed: {str(e)}")
-                    continue
-            
-            if not success:
-                self.show_toast(self.strings[self.current_lang].get("download_failed", "Download failed: ") + "所有下载方式均失败")
+            try:
+                print(f"[DEBUG] Downloading cover from: {actual_image_url}")
+                response = requests.get(actual_image_url, timeout=8, headers=headers, allow_redirects=True, stream=True, verify=False)
+                response.raise_for_status()
+                
+                temp_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}.tmp")
+                with open(temp_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                
+                from PIL import Image
+                with Image.open(temp_path) as img:
+                    target_w, target_h = 360, 200
+                    img_w, img_h = img.size
+                    
+                    print(f"[DEBUG] Original image: {img_w}x{img_h}")
+                    
+                    scale_w = target_w / img_w
+                    scale_h = target_h / img_h
+                    scale = max(scale_w, scale_h)
+                    
+                    new_w = max(int(img_w * scale), target_w)
+                    new_h = max(int(img_h * scale), target_h)
+                    
+                    img = img.resize((new_w, new_h), Image.LANCZOS)
+                    print(f"[DEBUG] Resized to: {new_w}x{new_h}")
+                    
+                    left = max(0, (new_w - target_w) // 2)
+                    top = max(0, (new_h - target_h) // 2)
+                    right = min(new_w, left + target_w)
+                    bottom = min(new_h, top + target_h)
+                    
+                    img = img.crop((left, top, right, bottom))
+                    print(f"[DEBUG] Cropped to: {img.size[0]}x{img.size[1]}")
+                    
+                    png_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}.png")
+                    img.save(png_path, 'PNG')
+                os.remove(temp_path)
+                cover_path = png_path
+                print(f"[DEBUG] Cover downloaded and processed successfully")
+            except Exception as e:
+                print(f"[DEBUG] Cover download failed: {str(e)}")
+                self.show_toast(self.strings[self.current_lang].get("download_failed", "Download failed: ") + str(e))
                 return
+        
+        summary = ""
+        if item_type == "link":
+            summary = getattr(self, 'link_summary_edit', None) and self.link_summary_edit.toPlainText().strip() or ""
+        else:
+            summary = getattr(self, 'file_summary_edit', None) and self.file_summary_edit.toPlainText().strip() or ""
         
         if self.editing_item_id is not None:
             if item_type == "link":
@@ -2496,14 +3322,14 @@ class MainWindow(QMainWindow):
                     return
                 title = self.link_title_edit.text().strip() or url
                 category = self.link_category_edit.text().strip() or self.strings[self.current_lang]["default_category"]
-                self.db.update_item(self.editing_item_id, title, url, category, cover_path)
+                self.db.update_item(self.editing_item_id, title, url, category, cover_path, summary)
             else:
                 if not self.dropped_file_path:
                     self.show_toast(self.strings[self.current_lang]["warning_drag_file"])
                     return
                 title = self.file_title_edit.text().strip() or os.path.basename(self.dropped_file_path)
                 category = self.file_category_edit.text().strip() or self.strings[self.current_lang]["default_file_category"]
-                self.db.update_item(self.editing_item_id, title, self.dropped_file_path, category, cover_path)
+                self.db.update_item(self.editing_item_id, title, self.dropped_file_path, category, cover_path, summary)
             self.show_toast(self.strings[self.current_lang]["success_update"])
             self.editing_item_id = None
             self.editing_item_type = None
@@ -2524,37 +3350,289 @@ class MainWindow(QMainWindow):
                     return
                 title = self.link_title_edit.text().strip() or url
                 category = self.link_category_edit.text().strip() or "未分类"
-                self.db.add_item(self.current_folder_id, item_type, title, url, category, cover_path)
+                self.db.add_item(self.current_folder_id, item_type, title, url, category, cover_path, summary)
             else:
                 if not self.dropped_file_path:
                     self.show_toast(self.strings[self.current_lang]["warning_drag_file_to_area"])
                     return
                 title = self.file_title_edit.text().strip() or os.path.basename(self.dropped_file_path)
                 category = self.file_category_edit.text().strip() or "文件"
-                self.db.add_item(self.current_folder_id, item_type, title, self.dropped_file_path, category, cover_path)
+                self.db.add_item(self.current_folder_id, item_type, title, self.dropped_file_path, category, cover_path, summary)
             self.show_toast(self.strings[self.current_lang]["success_add"])
             self.switch_to_page(1)
         self.link_url_edit.clear()
         self.link_title_edit.clear()
         self.link_category_edit.clear()
         self.link_cover_edit.clear()
+        if hasattr(self, 'link_summary_edit'):
+            self.link_summary_edit.clear()
         self.file_title_edit.clear()
         self.file_category_edit.clear()
         self.file_cover_edit.clear()
+        if hasattr(self, 'file_summary_edit'):
+            self.file_summary_edit.clear()
         self.dropped_file_path = None
         self.drop_area.setText(self.strings[self.current_lang]["drag_hint"])
         self.load_items_in_folder(self.current_folder_id)
 
     def select_cover_for_item(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, 
-                                                   self.strings[self.current_lang].get("select_cover", "Select Cover Image"),
-                                                   "",
-                                                   "Image Files (*.png *.jpg *.jpeg *.gif *.bmp *.svg)")
-        if file_path:
-            if self.item_type_combo.currentIndex() == 0:
-                self.link_cover_edit.setText(file_path)
-            else:
-                self.file_cover_edit.setText(file_path)
+        """选择封面（整合文件选择和预设封面）"""
+        from cover_presets import PRESET_COVERS, generate_preset_cover
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QLabel, QScrollArea, QWidget, QTabWidget, QFileDialog
+        from PyQt6.QtCore import QSize
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self.strings[self.current_lang].get("select_cover", "Select Cover"))
+        dialog.setFixedSize(450, 450)
+        
+        tab_widget = QTabWidget()
+        
+        # === 文件选择选项卡 ===
+        file_tab = QWidget()
+        file_layout = QVBoxLayout(file_tab)
+        
+        file_label = QLabel(self.strings[self.current_lang].get("select_cover_hint", "选择本地图片文件作为封面"))
+        file_layout.addWidget(file_label)
+        
+        file_btn = QPushButton(self.strings[self.current_lang].get("browse_files", "浏览文件"))
+        file_layout.addWidget(file_btn)
+        
+        self.selected_file_path = ""
+        self.selected_file_label = QLabel(self.strings[self.current_lang].get("no_file_selected", "未选择文件"))
+        self.selected_file_label.setStyleSheet("color: #666; font-size: 12px;")
+        file_layout.addWidget(self.selected_file_label)
+        
+        file_layout.addStretch()
+        
+        def browse_file():
+            file_path, _ = QFileDialog.getOpenFileName(self, 
+                                                       self.strings[self.current_lang].get("select_cover", "Select Cover Image"),
+                                                       "",
+                                                       "Image Files (*.png *.jpg *.jpeg *.gif *.bmp *.svg)")
+            if file_path:
+                self.selected_file_path = file_path
+                self.selected_file_label.setText(file_path)
+        
+        file_btn.clicked.connect(browse_file)
+        tab_widget.addTab(file_tab, self.strings[self.current_lang].get("local_file", "本地文件"))
+        
+        # === 预设封面选项卡 ===
+        preset_tab = QWidget()
+        preset_layout = QVBoxLayout(preset_tab)
+        preset_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # 创建固定大小的内容区域，确保4列按钮居中
+        content_widget = QWidget()
+        content_widget.setFixedWidth(392)  # 4 * 90 + 3 * 12 = 392
+        
+        grid_layout = QGridLayout(content_widget)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setSpacing(12)
+        
+        row = 0
+        col = 0
+        for preset_type, info in PRESET_COVERS.items():
+            # 生成封面预览
+            pixmap = generate_preset_cover(preset_type, QSize(80, 50))
+            
+            # 创建自定义按钮Widget
+            btn_widget = QWidget()
+            btn_widget.setFixedSize(90, 70)
+            btn_widget.setStyleSheet("""
+                QWidget {
+                    border-radius: 6px;
+                    background-color: #f0f0f0;
+                }
+                QWidget:hover {
+                    background-color: #e0e0e0;
+                }
+                QWidget:pressed {
+                    background-color: #d0d0d0;
+                }
+            """)
+            
+            # 创建按钮内部布局
+            btn_layout = QVBoxLayout(btn_widget)
+            btn_layout.setContentsMargins(0, 0, 0, 0)
+            btn_layout.setSpacing(2)
+            
+            # 添加弹性空间（上下各一个）
+            btn_layout.addStretch()
+            
+            # 设置图标（居中，不拉伸）
+            icon_label = QLabel()
+            icon_label.setPixmap(pixmap)
+            icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            icon_label.setFixedSize(80, 50)
+            icon_label.setScaledContents(False)
+            btn_layout.addWidget(icon_label)
+            
+            # 获取预设名称（支持多语言）
+            name = info["name"].get(self.current_lang, info["name"].get("zh", "未知"))
+            
+            # 创建名称标签（居中）
+            name_label = QLabel(name)
+            name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            name_label.setStyleSheet("font-size: 11px; color: #333;")
+            btn_layout.addWidget(name_label)
+            
+            # 添加弹性空间
+            btn_layout.addStretch()
+            
+            # 点击事件（使用鼠标释放事件）
+            btn_widget.mouseReleaseEvent = lambda event, pt=preset_type: self.on_cover_selected(f"preset://{pt}", dialog)
+            
+            grid_layout.addWidget(btn_widget, row, col)
+            col += 1
+            if col >= 4:
+                col = 0
+                row += 1
+        
+        # 将内容区域放在居中布局中
+        center_layout = QHBoxLayout()
+        center_layout.addStretch()
+        center_layout.addWidget(content_widget)
+        center_layout.addStretch()
+        
+        # 将居中布局放在滚动区域中
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.addLayout(center_layout)
+        scroll_layout.addStretch()
+        
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(scroll_content)
+        scroll_area.setStyleSheet("QScrollArea { border: none; }")
+        preset_layout.addWidget(scroll_area)
+        
+        tab_widget.addTab(preset_tab, self.strings[self.current_lang].get("preset_cover", "预设封面"))
+        
+        # === 底部按钮 ===
+        btn_layout = QHBoxLayout()
+        ok_btn = QPushButton(self.strings[self.current_lang].get("confirm", "确认"))
+        ok_btn.clicked.connect(lambda: self.on_cover_selected(self.selected_file_path, dialog))
+        cancel_btn = QPushButton(self.strings[self.current_lang].get("cancel", "取消"))
+        cancel_btn.clicked.connect(dialog.close)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        
+        # === 主布局 ===
+        main_layout = QVBoxLayout(dialog)
+        main_layout.addWidget(tab_widget)
+        main_layout.addLayout(btn_layout)
+        
+        dialog.exec()
+    
+    def on_cover_selected(self, cover_path, dialog):
+        """封面选择完成"""
+        if not cover_path:
+            dialog.close()
+            return
+        
+        mode = "link" if self.item_type_combo.currentIndex() == 0 else "file"
+        if mode == "link":
+            self.link_cover_edit.setText(cover_path)
+        else:
+            self.file_cover_edit.setText(cover_path)
+        dialog.close()
+
+    def generate_ai_summary(self):
+        print(f"[DEBUG] generate_ai_summary called")
+        print(f"[DEBUG] dropped_file_path: {self.dropped_file_path}")
+        
+        if not self.dropped_file_path:
+            self.show_toast(self.strings[self.current_lang].get("warning_drag_file", "请先拖拽文件"))
+            print(f"[DEBUG] dropped_file_path is empty")
+            return
+        
+        if not os.path.exists(self.dropped_file_path):
+            self.show_toast(self.strings[self.current_lang].get("file_not_found", "文件不存在"))
+            print(f"[DEBUG] file not found: {self.dropped_file_path}")
+            return
+        
+        print(f"[DEBUG] file exists: {self.dropped_file_path}")
+        
+        # 获取当前语言
+        language = self.current_lang
+        print(f"[DEBUG] language: {language}")
+        
+        # 清空之前的摘要内容
+        self.file_summary_edit.setPlainText("")
+        
+        # 禁用按钮并显示加载提示
+        self.ai_summary_btn.setEnabled(False)
+        self.ai_summary_btn.setText(self.strings[self.current_lang].get("ai_generating", "AI生成中..."))
+        
+        # 流式输出回调函数（使用信号机制实现线程安全）
+        def stream_callback(token):
+            self.summary_token_signal.emit(token)
+        
+        # 在新线程中执行AI生成，避免阻塞UI
+        def generate_in_thread():
+            print(f"[DEBUG] generate_in_thread started")
+            try:
+                from summary_generator import generate_summary_with_ai_from_file
+                
+                # 使用流式输出
+                print(f"[DEBUG] calling generate_summary_with_ai_from_file with streaming")
+                summary = generate_summary_with_ai_from_file(
+                    self.dropped_file_path, 
+                    language=language,
+                    callback=stream_callback  # 启用流式回调
+                )
+                print(f"[DEBUG] summary result: {summary[:50] if summary else 'None'}")
+                
+                # 安全网：如果流式输出失败，直接设置最终结果
+                if summary:
+                    self.summary_result_signal.emit(summary)
+                    if language == "zh":
+                        self.toast_signal.emit("AI摘要生成成功")
+                    else:
+                        self.toast_signal.emit("AI summary generated successfully")
+                else:
+                    if language == "zh":
+                        self.toast_signal.emit("无法生成摘要，请检查文件内容")
+                    else:
+                        self.toast_signal.emit("Cannot generate summary, please check file content")
+            except Exception as e:
+                print(f"[DEBUG] AI summary generation failed: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                if language == "zh":
+                    self.toast_signal.emit(f"AI摘要生成失败: {str(e)}")
+                else:
+                    self.toast_signal.emit(f"AI summary generation failed: {str(e)}")
+            finally:
+                # 恢复按钮状态（线程安全）
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, self._reset_ai_button)
+        
+        # 启动新线程
+        import threading
+        thread = threading.Thread(target=generate_in_thread)
+        thread.daemon = True
+        thread.start()
+        print(f"[DEBUG] thread started")
+    
+    def _update_summary_stream(self, token):
+        """流式更新摘要文本（追加模式）"""
+        current_text = self.file_summary_edit.toPlainText()
+        self.file_summary_edit.setPlainText(current_text + token)
+    
+    def _set_summary_result(self, summary):
+        """设置最终摘要结果（作为流式输出失败时的安全网）"""
+        current_text = self.file_summary_edit.toPlainText()
+        # 如果当前文本为空或与最终结果不一致，直接设置
+        if not current_text or current_text != summary:
+            self.file_summary_edit.setPlainText(summary)
+    
+    def _reset_ai_button(self):
+        """线程安全的按钮状态重置"""
+        self.ai_summary_btn.setEnabled(True)
+        self.ai_summary_btn.setText(self.strings[self.current_lang].get("ai_summary_btn", "AI生成摘要"))
 
     def resizeEvent(self, event):
         if self.settings_overlay:

@@ -41,6 +41,8 @@ class Database:
             columns = [col[1] for col in cursor.fetchall()]
             if 'password_hash' not in columns:
                 cursor.execute("ALTER TABLE items ADD COLUMN password_hash TEXT")
+            if 'summary' not in columns:
+                cursor.execute("ALTER TABLE items ADD COLUMN summary TEXT")
             conn.commit()
 
     def add_folder(self, name):
@@ -63,13 +65,13 @@ class Database:
             row = cursor.fetchone()
             return row[0] if row else 0
 
-    def add_item(self, folder_id, item_type, title, url_or_path, category, cover_path):
+    def add_item(self, folder_id, item_type, title, url_or_path, category, cover_path, summary=""):
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO items (folder_id, item_type, title, url, category, cover_path)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (folder_id, item_type, title, url_or_path, category, cover_path))
+                INSERT INTO items (folder_id, item_type, title, url, category, cover_path, summary)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (folder_id, item_type, title, url_or_path, category, cover_path, summary))
             conn.commit()
             return cursor.lastrowid
 
@@ -77,7 +79,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, item_type, title, url, category, cover_path, password_hash FROM items WHERE folder_id = ?",
+                "SELECT id, item_type, title, url, category, cover_path, password_hash, summary FROM items WHERE folder_id = ?",
                 (folder_id,))
             return cursor.fetchall()
 
@@ -93,14 +95,14 @@ class Database:
             cursor.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
             conn.commit()
 
-    def update_item(self, item_id, title, url_or_path, category, cover_path=None):
+    def update_item(self, item_id, title, url_or_path, category, cover_path=None, summary=""):
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE items 
-                SET title = ?, url = ?, category = ?, cover_path = ?
+                SET title = ?, url = ?, category = ?, cover_path = ?, summary = ?
                 WHERE id = ?
-            ''', (title, url_or_path, category, cover_path or "", item_id))
+            ''', (title, url_or_path, category, cover_path or "", summary, item_id))
             conn.commit()
 
     def delete_item(self, item_id):
@@ -179,7 +181,7 @@ class Database:
     def get_item_by_id(self, item_id):
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT item_type, title, url, category, cover_path, password_hash FROM items WHERE id = ?",
+            cursor.execute("SELECT item_type, title, url, category, cover_path, password_hash, summary FROM items WHERE id = ?",
                            (item_id,))
             row = cursor.fetchone()
             return row if row else None
