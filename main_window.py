@@ -23,6 +23,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QAction, QDragEnterEvent, QDropEvent, QC
 from database import Database
 from widgets import FolderCard, ItemCard, ToastNotification
 from background_manager import background_manager
+from mindmap_view import MindmapView
 
 def resource_path(relative_path):
     """获取资源的绝对路径，兼容开发环境和 PyInstaller 打包后的环境"""
@@ -406,6 +407,12 @@ class MainWindow(QMainWindow):
         self.anim_group = None
         self.db = Database()
         
+        # 迁移旧的封面路径到持久化目录
+        try:
+            self.db.migrate_cover_paths()
+        except Exception as e:
+            print(f"[WARN] 封面路径迁移失败: {e}")
+        
         # 连接线程安全信号
         self.summary_token_signal.connect(self._update_summary_stream)
         self.summary_result_signal.connect(self._set_summary_result)
@@ -437,7 +444,7 @@ class MainWindow(QMainWindow):
                 "theme_color": "主题色",
                 "select_color": "选择颜色",
                 "about_title": "关于",
-                "version": "版本: v0.1.0-beta",
+                "version": "版本: v0.1.1-beta",
                 "open_source": "开源地址",
                 "language_title": "语言",
                 "chinese": "简体中文",
@@ -551,7 +558,55 @@ class MainWindow(QMainWindow):
                 "card_bg_image": "背景图片",
                 "card_bg_image_opacity": "背景图片透明度",
                 
-                "card_bg_strategy": "背景策略"
+                "card_bg_strategy": "背景策略",
+                
+                # 思维导图相关
+                "edit_mode": "编辑模式",
+                "exit_edit_mode": "退出编辑模式",
+                "summary_btn": "摘要",
+                "mindmap_title": "思维导图视图",
+                "password_success": "密码设置成功!",
+                "password_change_success": "密码修改成功!",
+                "password_remove_success": "密码已移除!",
+                "password_operation_failed": "密码操作失败",
+                "cannot_open_url": "无法打开链接",
+                "cannot_open_url_detail": "打开URL失败",
+                "category_management": "分类管理",
+                "no_categories": "暂无分类",
+                "rename_category": "重命名",
+                "delete_category": "删除",
+                "add_category": "+ 添加分类",
+                "rename_category_dialog_title": "重命名分类",
+                "rename_category_dialog_label": "请输入新名称：",
+                "rename_failed": "重命名失败",
+                "delete_category_confirm": "确定要删除分类「{0}」吗？\n该分类下的项目将被设为「未分类」。",
+                "delete_failed": "删除失败",
+                "category_exists": "分类「{0}」已存在！",
+                "add_failed": "添加失败",
+                "new_category_dialog_title": "添加分类",
+                "new_category_dialog_label": "请输入新分类名称：",
+                "drag_success": "拖拽成功",
+                "drag_success_msg": "成功将项目移动到「{0}」分类",
+                "password": "密码",
+                "error_title": "错误",
+                "confirm_delete": "确认删除",
+                "delete_item_confirm": "确定要删除该项目吗？",
+                "password_action_failed": "密码操作失败",
+                "invalid_input": "请输入有效的密码",
+                "passwords_do_not_match": "两次输入的密码不一致",
+                "passwords_match": "两次输入的密码一致",
+                "password_too_short": "密码至少需要4个字符",
+                "password_cannot_be_empty": "密码不能为空",
+                "incorrect_password": "密码不正确",
+                "old_password_incorrect": "原密码不正确",
+                "unlock_failed": "解锁失败",
+                "unlock_failed_detail": "解密内容失败",
+                "info": "提示",
+                "error": "错误",
+                "password_incorrect": "密码不正确",
+                "summary_title": "📝 摘要",
+                "type_link": "链接",
+                "type_file": "本地文件"
             },
             "en": {
                "window_title": "Favorites Manager",
@@ -568,7 +623,7 @@ class MainWindow(QMainWindow):
                 "theme_color": "Theme Color",
                 "select_color": "Choose Color",
                 "about_title": "About",
-                "version": "Version: v0.1.0-beta",
+                "version": "Version: v0.1.1-beta",
                 "open_source": "Open Source",
                 "language_title": "Language",
                 "chinese": "Simplified Chinese",
@@ -682,7 +737,55 @@ class MainWindow(QMainWindow):
                 "card_bg_image": "Background Image",
                 "card_bg_image_opacity": "Background Image Opacity",
                 
-                "card_bg_strategy": "Background Strategy"
+                "card_bg_strategy": "Background Strategy",
+                
+                # Mind map related
+                "edit_mode": "Edit Mode",
+                "exit_edit_mode": "Exit Edit Mode",
+                "summary_btn": "S",
+                "mindmap_title": "Mind Map View",
+                "password_success": "Password set successfully!",
+                "password_change_success": "Password changed successfully!",
+                "password_remove_success": "Password removed!",
+                "password_operation_failed": "Password operation failed",
+                "cannot_open_url": "Cannot open link",
+                "cannot_open_url_detail": "Failed to open URL",
+                "category_management": "Category Management",
+                "no_categories": "No categories",
+                "rename_category": "Rename",
+                "delete_category": "Delete",
+                "add_category": "+ Add Category",
+                "rename_category_dialog_title": "Rename Category",
+                "rename_category_dialog_label": "Enter new name:",
+                "rename_failed": "Rename failed",
+                "delete_category_confirm": "Are you sure to delete category '{0}'?\nItems in this category will be set to 'Uncategorized'.",
+                "delete_failed": "Delete failed",
+                "category_exists": "Category '{0}' already exists!",
+                "add_failed": "Add failed",
+                "new_category_dialog_title": "Add Category",
+                "new_category_dialog_label": "Enter category name:",
+                "drag_success": "Drag Success",
+                "drag_success_msg": "Successfully moved item to '{0}' category",
+                "password": "Password",
+                "error_title": "Error",
+                "confirm_delete": "Confirm Delete",
+                "delete_item_confirm": "Are you sure to delete this item?",
+                "password_action_failed": "Password action failed",
+                "invalid_input": "Please enter a valid password",
+                "passwords_do_not_match": "Passwords do not match",
+                "passwords_match": "Passwords match",
+                "password_too_short": "Password must be at least 4 characters",
+                "password_cannot_be_empty": "Password cannot be empty",
+                "incorrect_password": "Incorrect password",
+                "old_password_incorrect": "Old password is incorrect",
+                "unlock_failed": "Unlock Failed",
+                "unlock_failed_detail": "Failed to decrypt content",
+                "info": "Info",
+                "error": "Error",
+                "password_incorrect": "Incorrect password",
+                "summary_title": "📝 Summary",
+                "type_link": "Links",
+                "type_file": "Files"
             }
         }
 
@@ -718,8 +821,17 @@ class MainWindow(QMainWindow):
         self.setup_add_item_page()
         self.stacked_widget.addWidget(self.add_item_page)
 
+        # 页面3: 思维导图页面
+        self.mindmap_page = QWidget()
+        self.mindmap_page.setObjectName("page")
+        self.mindmap_layout = QVBoxLayout(self.mindmap_page)
+        self.mindmap_layout.setContentsMargins(0, 0, 0, 0)
+        self.stacked_widget.addWidget(self.mindmap_page)
+        self.current_mindmap_view = None
+
         self.stacked_widget.setCurrentIndex(0)
         self.current_folder_id = None
+        self.current_folder_name = ""
 
         # 设置侧边栏相关属性
         self.settings_sidebars = []        # 存储当前打开的侧边栏（从外到内）
@@ -817,7 +929,52 @@ class MainWindow(QMainWindow):
 <li>模型选择：选择使用的AI模型</li>
 <li>温度设置：调整AI生成内容的随机性</li>
 <li>最大token数：限制AI生成内容的长度</li>
-</ul>"""
+</ul>""",
+                "mindmap": """<h3>思维导图视图</h3>
+<p>思维导图以可视化方式展示收藏夹的层级结构。</p>
+<p><strong>层级结构：</strong></p>
+<ul>
+<li><strong>中心节点</strong>：显示收藏夹名称（红色圆形卡片）</li>
+<li><strong>第一级分支</strong>：收藏项的类别（绿色圆角矩形）</li>
+<li><strong>第二级分支</strong>：按类型分类（链接/本地文件，绿色圆角矩形）</li>
+<li><strong>第三级分支</strong>：具体的收藏项（蓝色矩形加三角形）</li>
+</ul>
+<p><strong>基础操作：</strong></p>
+<ul>
+<li>点击节点可展开或收起其子节点</li>
+<li>默认展开到第二级（收藏项类型）</li>
+<li>鼠标悬停在收藏项节点上可预览封面</li>
+<li>点击收藏项节点可查看摘要内容</li>
+<li>滚轮可缩放视图，按住鼠标左键可拖动视图</li>
+</ul>
+<p><strong>编辑模式：</strong></p>
+<ul>
+<li>点击顶部"编辑"按钮进入编辑模式</li>
+<li>编辑模式下可以右键点击收藏项进行编辑或删除</li>
+<li>再次点击按钮退出编辑模式</li>
+</ul>
+<p><strong>分类管理：</strong></p>
+<ul>
+<li>点击顶部"分类"按钮打开分类管理面板</li>
+<li>可以添加、重命名或删除分类</li>
+<li>删除分类后，该分类下的项目将设为"未分类"</li>
+</ul>
+<p><strong>筛选与搜索：</strong></p>
+<ul>
+<li>点击顶部"筛选"按钮可按分类筛选收藏项</li>
+<li>使用搜索框可以按标题快速查找收藏项</li>
+</ul>
+<p><strong>密码保护：</strong></p>
+<ul>
+<li>在编辑模式下右键点击收藏项可设置密码</li>
+<li>设置密码后，查看收藏项内容需要输入密码</li>
+<li>可以修改或移除已设置的密码</li>
+</ul>
+<p><strong>拖拽功能：</strong></p>
+<ul>
+<li>在编辑模式下，可以拖拽收藏项到不同分类</li>
+<li>拖拽后收藏项的分类将更新</li>
+</ul>""",
             },
             "en": {
                 "folders": """<h3>Folder List</h3>
@@ -908,6 +1065,51 @@ class MainWindow(QMainWindow):
 <li>Model Selection: Select AI model to use</li>
 <li>Temperature: Adjust randomness of AI-generated content</li>
 <li>Max Tokens: Limit length of AI-generated content</li>
+</ul>""",
+                "mindmap": """<h3>Mind Map View</h3>
+<p>The mind map visually displays the hierarchy of your favorites.</p>
+<p><strong>Hierarchy:</strong></p>
+<ul>
+<li><strong>Center Node</strong>: Folder name (red circle)</li>
+<li><strong>Level 1 Branches</strong>: Categories (green rounded rectangles)</li>
+<li><strong>Level 2 Branches</strong>: Types (Links/Files, green rounded rectangles)</li>
+<li><strong>Level 3 Branches</strong>: Individual items (blue rectangles with triangles)</li>
+</ul>
+<p><strong>Basic Operations:</strong></p>
+<ul>
+<li>Click a node to expand or collapse its children</li>
+<li>Default expansion shows up to level 2 (types)</li>
+<li>Hover over an item node to preview its cover</li>
+<li>Click an item node to view its summary</li>
+<li>Use mouse wheel to zoom, drag to pan the view</li>
+</ul>
+<p><strong>Edit Mode:</strong></p>
+<ul>
+<li>Click the "Edit" button at the top to enter edit mode</li>
+<li>In edit mode, right-click items to edit or delete</li>
+<li>Click the button again to exit edit mode</li>
+</ul>
+<p><strong>Category Management:</strong></p>
+<ul>
+<li>Click the "Categories" button at the top to open category management panel</li>
+<li>Add, rename, or delete categories</li>
+<li>When deleting a category, items in that category will be set to "Uncategorized"</li>
+</ul>
+<p><strong>Filter and Search:</strong></p>
+<ul>
+<li>Click the "Filter" button at the top to filter items by category</li>
+<li>Use the search box to quickly find items by title</li>
+</ul>
+<p><strong>Password Protection:</strong></p>
+<ul>
+<li>In edit mode, right-click items to set passwords</li>
+<li>After setting a password, entering it is required to view item content</li>
+<li>Passwords can be changed or removed</li>
+</ul>
+<p><strong>Drag and Drop:</strong></p>
+<ul>
+<li>In edit mode, drag items to different categories</li>
+<li>The item's category will be updated after dragging</li>
 </ul>"""
             }
         }
@@ -952,7 +1154,7 @@ class MainWindow(QMainWindow):
 
     # ---------- 帮助按钮和侧边栏相关方法 ----------
     def _init_help_button(self):
-        """初始化帮助按钮（可拖拽）"""
+        """初始化帮助按钮和思维导图按钮（可拖拽）"""
         from PyQt6.QtWidgets import QGraphicsDropShadowEffect
 
         self.help_btn = DraggableHelpButton(self)
@@ -978,7 +1180,7 @@ class MainWindow(QMainWindow):
         icon_path = resource_path("resources/icons/help.svg")
         if os.path.exists(icon_path):
             self.help_btn.setIcon(QIcon(icon_path))
-            self.help_btn.setIconSize(self.help_btn.size())
+            self.help_btn.setIconSize(QSize(24, 24))  # 缩小图标尺寸
         else:
             self.help_btn.setText("?")
         
@@ -992,16 +1194,66 @@ class MainWindow(QMainWindow):
         shadow.setColor(QColor(0, 0, 0, 150))
         self.help_btn.setGraphicsEffect(shadow)
 
+        # 初始化思维导图按钮（在帮助按钮上方）
+        self.mindmap_btn = DraggableHelpButton(self)
+        self.mindmap_btn.setFixedSize(48, 48)
+        self.mindmap_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # 设置圆形样式，颜色跟随主题色
+        theme_color = MainWindow.current_theme_color.name()
+        self.mindmap_btn.setStyleSheet(f"""
+            QPushButton {{
+                border-radius: 24px;
+                background-color: {theme_color};
+                border: none;
+            }}
+            QPushButton:hover {{
+                background-color: {theme_color}CC;
+            }}
+            QPushButton:pressed {{
+                background-color: {theme_color}99;
+            }}
+        """)
+        
+        # 加载思维导图图标
+        mindmap_icon_path = resource_path("resources/icons/mindmap.svg")
+        if os.path.exists(mindmap_icon_path):
+            self.mindmap_btn.setIcon(QIcon(mindmap_icon_path))
+            self.mindmap_btn.setIconSize(QSize(24, 24))  # 缩小图标尺寸
+        else:
+            self.mindmap_btn.setText("🗺️")
+        
+        self.mindmap_btn.clicked.connect(self.open_mindmap)
+        self.mindmap_btn.raise_()
+
+        # 添加阴影效果
+        mindmap_shadow = QGraphicsDropShadowEffect()
+        mindmap_shadow.setBlurRadius(10)
+        mindmap_shadow.setOffset(2, 2)
+        mindmap_shadow.setColor(QColor(0, 0, 0, 150))
+        self.mindmap_btn.setGraphicsEffect(mindmap_shadow)
+
         # 初始位置（右下角）
         self._update_help_button_position()
 
     def _update_help_button_position(self):
-        """更新帮助按钮位置（始终在右下角）"""
+        """更新帮助按钮和思维导图按钮位置（始终在右下角）"""
         margin = 20
-        x = self.width() - self.help_btn.width() - margin
-        y = self.height() - self.help_btn.height() - margin
-        self.help_btn.move(x, y)
+        button_size = self.help_btn.width()
+        spacing = 10  # 两个按钮之间的间距
+        
+        # 帮助按钮位置（右下角）
+        help_x = self.width() - button_size - margin
+        help_y = self.height() - button_size - margin
+        self.help_btn.move(help_x, help_y)
         self.help_btn.raise_()
+        
+        # 思维导图按钮位置（在帮助按钮上方）
+        if hasattr(self, 'mindmap_btn'):
+            mindmap_x = help_x
+            mindmap_y = help_y - button_size - spacing
+            self.mindmap_btn.move(mindmap_x, mindmap_y)
+            self.mindmap_btn.raise_()
 
     def resizeEvent(self, event):
         """窗口大小改变时更新帮助按钮位置"""
@@ -1178,6 +1430,8 @@ class MainWindow(QMainWindow):
             return "items"
         elif index == 2:
             return "add_item"
+        elif index == 3:
+            return "mindmap"
         return "folders"
 
     # ---------- 设置侧边栏相关方法 ----------
@@ -2019,6 +2273,22 @@ class MainWindow(QMainWindow):
                 }}
             """)
 
+        # 更新思维导图按钮样式（保持圆形，跟随主题色）
+        if hasattr(self, 'mindmap_btn'):
+            self.mindmap_btn.setStyleSheet(f"""
+                QPushButton {{
+                    border-radius: 24px;
+                    background-color: {color_str};
+                    border: none;
+                }}
+                QPushButton:hover {{
+                    background-color: {color_str}CC;
+                }}
+                QPushButton:pressed {{
+                    background-color: {color_str}AA;
+                }}
+            """)
+
         # FolderCard 和 ItemCard 使用 update_theme 方法更新主题
         for card in self.findChildren(FolderCard):
             card.update_theme(dark)
@@ -2326,6 +2596,10 @@ class MainWindow(QMainWindow):
         # 更新收藏夹卡片的语言
         for card in self.findChildren(FolderCard):
             card.update_language(self.current_lang)
+
+        # 更新思维导图视图的语言
+        if hasattr(self, 'current_mindmap_view') and self.current_mindmap_view:
+            self.current_mindmap_view.update_language(self.current_lang)
 
 
     def setup_folders_page(self):
@@ -2913,6 +3187,59 @@ class MainWindow(QMainWindow):
         self.exit_multi_select_mode()
         self.switch_to_page(0)
 
+    def open_mindmap(self):
+        """打开思维导图页面"""
+        if self.current_folder_id is None:
+            self.show_toast(self.strings[self.current_lang]["warning_no_folder"])
+            return
+        
+        # 获取当前收藏夹名称
+        folders = self.db.get_folders()
+        folder_name = ""
+        for folder in folders:
+            if folder[0] == self.current_folder_id:
+                folder_name = folder[1]
+                break
+        
+        if not folder_name:
+            folder_name = "未命名收藏夹"
+        
+        self.current_folder_name = folder_name
+        
+        # 创建思维导图视图
+        if self.current_mindmap_view:
+            self.current_mindmap_view.setParent(None)
+            self.current_mindmap_view.deleteLater()
+            self.current_mindmap_view = None
+        
+        self.current_mindmap_view = MindmapView(self.db, self.current_folder_id, folder_name, strings=self.strings, current_lang=self.current_lang)
+        self.current_mindmap_view.back_requested.connect(self.close_mindmap)
+        self.current_mindmap_view.add_item_requested.connect(self.open_add_item_page)
+        self.current_mindmap_view.edit_item_requested.connect(self.edit_item_from_mindmap)
+        self.current_mindmap_view.refresh_view_requested.connect(self.refresh_current_view)
+        
+        # 添加到布局
+        self.mindmap_layout.addWidget(self.current_mindmap_view)
+        
+        # 切换到思维导图页面
+        self.switch_to_page(3)
+
+    def close_mindmap(self):
+        """关闭思维导图页面"""
+        self.switch_to_page(1)  # 返回到收藏项页面
+    
+    def edit_item_from_mindmap(self, data):
+        """从思维导图编辑收藏项"""
+        if not data:
+            return
+        item_id = data.get('id')
+        title = data.get('title', '')
+        url = data.get('url', '')
+        category = data.get('category', '')
+        item_type = data.get('item_type', 'link')
+        # 调用现有的 edit_item 方法
+        self.edit_item(item_id, title, url, category, item_type)
+
     def switch_to_page(self, target_index):
         current_index = self.stacked_widget.currentIndex()
         if current_index == target_index:
@@ -2969,6 +3296,24 @@ class MainWindow(QMainWindow):
     def _finish_switch(self, target_index):
         self.stacked_widget.setCurrentIndex(target_index)
         self.anim_group = None
+        
+        # 根据页面类型设置按钮可见性
+        # 帮助按钮在所有页面可见，思维导图按钮只在收藏项页面可见
+        if hasattr(self, 'mindmap_btn'):
+            self.mindmap_btn.setVisible(target_index == 1)  # 只在收藏项页面可见
+        if hasattr(self, 'help_btn'):
+            self.help_btn.setVisible(True)  # 帮助按钮在所有页面可见
+        
+        # 确保按钮位置正确
+        self._update_help_button_position()
+        
+        # 切换到收藏项页面时自动刷新列表
+        if target_index == 1 and self.current_folder_id is not None:
+            self.load_items_in_folder(self.current_folder_id)
+        
+        # 切换到文件夹列表页面时刷新
+        if target_index == 0:
+            self.load_folders()
 
     def open_add_item_page(self):
         self.link_url_edit.clear()
@@ -3226,12 +3571,13 @@ class MainWindow(QMainWindow):
             cover_path = getattr(self, 'file_cover_edit', None) and self.file_cover_edit.text().strip() or ""
         
         if cover_path and cover_path.startswith(('http://', 'https://')):
-            import tempfile
             import warnings
             from urllib3.exceptions import InsecureRequestWarning
             warnings.filterwarnings('ignore', category=InsecureRequestWarning)
             
-            temp_dir = tempfile.gettempdir()
+            # 创建持久化的封面存储目录
+            covers_dir = os.path.join(os.path.expanduser('~'), '.favourite', 'covers')
+            os.makedirs(covers_dir, exist_ok=True)
             
             image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.avif')
             
@@ -3262,12 +3608,21 @@ class MainWindow(QMainWindow):
                 'Accept-Encoding': 'identity'
             }
             
+            # 根据域名设置正确的 Referer
+            if 'hdslb.com' in actual_image_url or 'bilibili' in actual_image_url:
+                headers['Referer'] = 'https://www.bilibili.com/'
+            elif 'douyinpic' in actual_image_url or 'douyin' in actual_image_url:
+                headers['Referer'] = 'https://www.douyin.com/'
+            elif 'xiaohongshu' in actual_image_url:
+                headers['Referer'] = 'https://www.xiaohongshu.com/'
+            
             try:
                 print(f"[DEBUG] Downloading cover from: {actual_image_url}")
                 response = requests.get(actual_image_url, timeout=8, headers=headers, allow_redirects=True, stream=True, verify=False)
                 response.raise_for_status()
                 
-                temp_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}.tmp")
+                # 使用持久化目录存储临时文件
+                temp_path = os.path.join(covers_dir, f"temp_{self.current_folder_id}_{hash(cover_path)}.tmp")
                 with open(temp_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
@@ -3297,11 +3652,15 @@ class MainWindow(QMainWindow):
                     img = img.crop((left, top, right, bottom))
                     print(f"[DEBUG] Cropped to: {img.size[0]}x{img.size[1]}")
                     
-                    png_path = os.path.join(temp_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}.png")
+                    png_path = os.path.join(covers_dir, f"cover_{self.current_folder_id}_{hash(cover_path)}.png")
                     img.save(png_path, 'PNG')
-                os.remove(temp_path)
+                
+                # 删除临时文件
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    
                 cover_path = png_path
-                print(f"[DEBUG] Cover downloaded and processed successfully")
+                print(f"[DEBUG] Cover downloaded and saved to persistent storage")
             except Exception as e:
                 print(f"[DEBUG] Cover download failed: {str(e)}")
                 self.show_toast(self.strings[self.current_lang].get("download_failed", "Download failed: ") + str(e))
@@ -3827,11 +4186,15 @@ class MainWindow(QMainWindow):
         self.refresh_current_view()
 
     def refresh_current_view(self):
+        """刷新当前视图 - 同时刷新收藏项列表的数据"""
+        # 无论在哪个页面，都刷新收藏项列表（密码状态可能已改变）
+        if self.current_folder_id is not None:
+            self.load_items_in_folder(self.current_folder_id)
+        
+        # 如果当前在文件夹列表页，也刷新它
         index = self.stacked_widget.currentIndex()
         if index == 0:
             self.load_folders()
-        elif index == 1 and self.current_folder_id is not None:
-            self.load_items_in_folder(self.current_folder_id)
 
     def open_password_setup(self, target_type, target_id):
         self._show_password_sidebar('setup', target_type, target_id)

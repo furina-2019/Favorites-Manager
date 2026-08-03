@@ -79,7 +79,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, item_type, title, url, category, cover_path, password_hash, summary FROM items WHERE folder_id = ?",
+                "SELECT id, item_type, title, url, category, cover_path, password_hash, summary, created_at FROM items WHERE folder_id = ?",
                 (folder_id,))
             return cursor.fetchall()
 
@@ -103,6 +103,13 @@ class Database:
                 SET title = ?, url = ?, category = ?, cover_path = ?, summary = ?
                 WHERE id = ?
             ''', (title, url_or_path, category, cover_path or "", summary, item_id))
+            conn.commit()
+
+    def update_item_category(self, item_id, category):
+        """仅更新收藏项的类别"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE items SET category = ? WHERE id = ?", (category, item_id))
             conn.commit()
 
     def delete_item(self, item_id):
@@ -185,3 +192,37 @@ class Database:
                            (item_id,))
             row = cursor.fetchone()
             return row if row else None
+
+    def migrate_cover_paths(self):
+        """迁移旧的封面路径从临时目录到持久化目录"""
+        import tempfile
+        import shutil
+        
+        temp_dir = tempfile.gettempdir()
+        covers_dir = os.path.join(os.path.expanduser('~'), '.favourite', 'covers')
+        os.makedirs(covers_dir, exist_ok=True)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, cover_path FROM items WHERE cover_path IS NOT NULL AND cover_path != ''")
+            
+            for item_id, cover_path in cursor.fetchall():
+                # 检查是否是旧的临时路径
+                if cover_path.startswith(temp_dir) and os.path.exists(cover_path):
+                    # 生成新的持久化路径
+                    filename = os.path.basename(cover_path)
+                    new_path = os.path.join(covers_dir, filename)
+                    
+                    # 如果目标文件不存在，复制文件
+                    if not os.path.exists(new_path):
+                        try:
+                            shutil.copy2(cover_path, new_path)
+                            print(f"[MIGRATE] 迁移封面: {cover_path} -> {new_path}")
+                        except Exception as e:
+                            print(f"[ERROR] 迁移封面失败: {e}")
+                            continue
+                    
+                    # 更新数据库中的路径
+                    cursor.execute("UPDATE items SET cover_path = ? WHERE id = ?", (new_path, item_id))
+            
+            conn.commit()
