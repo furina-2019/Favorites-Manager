@@ -38,42 +38,47 @@ except ImportError:
 try:
     import sys
     
-    # 设置 LLAMA_CPP_LIB 环境变量，确保在 PyInstaller 打包后也能找到 DLL 文件
-    llama_dll_path = None
-    possible_paths = []
+    # 设置 LLAMA_CPP_LIB_PATH 环境变量，确保在 PyInstaller 打包后也能找到 DLL 文件
+    # llama_cpp 库检查的环境变量是 LLAMA_CPP_LIB_PATH（注意：不是 LLAMA_CPP_LIB）
+    # 该变量需要的是包含 llama.dll 的目录路径
+    llama_lib_dir = None
+    possible_dirs = []
     
     try:
         # PyInstaller 打包后的路径
         base_path = sys._MEIPASS
-        possible_paths.append(os.path.join(base_path, "llama_cpp", "llama.dll"))
-        possible_paths.append(os.path.join(base_path, "llama.dll"))
+        possible_dirs.append(os.path.join(base_path, "llama_cpp", "lib"))
+        possible_dirs.append(os.path.join(base_path, "llama_cpp"))
+        possible_dirs.append(base_path)
     except AttributeError:
         pass
     
     # 开发环境路径
     dev_base_path = os.path.dirname(os.path.abspath(__file__))
-    possible_paths.append(os.path.join(dev_base_path, ".venv", "Lib", "site-packages", "llama_cpp", "llama.dll"))
-    possible_paths.append(os.path.join(dev_base_path, ".venv", "Lib", "site-packages", "bin", "llama.dll"))
-    possible_paths.append(os.path.join(dev_base_path, "llama_cpp", "llama.dll"))
+    possible_dirs.append(os.path.join(dev_base_path, ".venv", "Lib", "site-packages", "llama_cpp", "lib"))
+    possible_dirs.append(os.path.join(dev_base_path, ".venv", "Lib", "site-packages", "llama_cpp"))
+    possible_dirs.append(os.path.join(dev_base_path, ".venv", "Lib", "site-packages", "bin"))
+    possible_dirs.append(os.path.join(dev_base_path, "llama_cpp", "lib"))
+    possible_dirs.append(os.path.join(dev_base_path, "llama_cpp"))
     
-    # 尝试查找有效的 DLL 路径
-    for path in possible_paths:
-        if os.path.exists(path):
-            llama_dll_path = path
+    # 尝试查找有效的 DLL 目录（需要包含 llama.dll）
+    for dir_path in possible_dirs:
+        if os.path.isdir(dir_path) and os.path.exists(os.path.join(dir_path, "llama.dll")):
+            llama_lib_dir = dir_path
             break
     
-    if llama_dll_path:
-        os.environ["LLAMA_CPP_LIB"] = llama_dll_path
-        print(f"[DEBUG] Set LLAMA_CPP_LIB to: {llama_dll_path}")
+    if llama_lib_dir:
+        os.environ["LLAMA_CPP_LIB_PATH"] = llama_lib_dir
+        print(f"[DEBUG] Set LLAMA_CPP_LIB_PATH to: {llama_lib_dir}")
     else:
-        print(f"[DEBUG] llama.dll not found. Searched paths: {possible_paths}")
+        print(f"[DEBUG] llama.dll not found. Searched dirs: {possible_dirs}")
     
     from llama_cpp import Llama
     HAS_LLAMA_CPP = True
     HAS_CTRANSFORMERS = False
     print("[DEBUG] Using llama_cpp for AI summarization")
-except ImportError as e:
-    print(f"[DEBUG] Failed to import llama_cpp: {str(e)}")
+except (ImportError, FileNotFoundError, RuntimeError) as e:
+    print(f"[DEBUG] Failed to initialize llama_cpp: {str(e)}")
     HAS_LLAMA_CPP = False
 
 # 备用：使用 ctransformers
