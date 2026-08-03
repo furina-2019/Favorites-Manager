@@ -17,6 +17,8 @@ def normalize_url(url):
         url = 'https:' + url
     elif url.startswith('/'):
         url = 'https://www.example.com' + url
+    # 移除 B 站图片尺寸后缀 @数字w_数字h
+    url = re.sub(r'@\d+w_\d+h$', '', url)
     return url
 
 def decode_unicode_url(url):
@@ -25,6 +27,34 @@ def decode_unicode_url(url):
     except:
         return url
 
+def extract_cover_bilibili_api(url):
+    """使用 B 站 API 提取封面"""
+    try:
+        # 从 URL 中提取 bvid
+        bvid_match = re.search(r'/video/(BV\w+)', url)
+        if bvid_match:
+            bvid = bvid_match.group(1)
+            api_url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+            
+            bilibili_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://www.bilibili.com/',
+                'Accept': 'application/json, text/plain, */*'
+            }
+            
+            response = requests.get(api_url, headers=bilibili_headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('code') == 0 and 'data' in data:
+                    video_data = data['data']
+                    cover = video_data.get('pic', '')
+                    if cover:
+                        return decode_unicode_url(normalize_url(cover))
+        return None
+    except Exception as e:
+        print(f"[DEBUG] Bilibili API error: {str(e)}")
+        return None
+
 def extract_cover_bilibili(html_content, url):
     soup = BeautifulSoup(html_content, 'html.parser')
     
@@ -32,33 +62,52 @@ def extract_cover_bilibili(html_content, url):
     if og_image and og_image.get('content'):
         return decode_unicode_url(normalize_url(og_image['content']))
     
+    # 尝试从 window.__playinfo__ 获取
+    playinfo_match = re.search(r'window\.__playinfo__\s*=\s*({.*?});', html_content, re.DOTALL)
+    if playinfo_match:
+        try:
+            data = json.loads(playinfo_match.group(1))
+            if 'data' in data:
+                video_data = data['data']
+                if 'cover' in video_data:
+                    return decode_unicode_url(normalize_url(video_data['cover']))
+                if 'dash' in video_data and 'video' in video_data['dash']:
+                    videos = video_data['dash']['video']
+                    if videos:
+                        return decode_unicode_url(normalize_url(videos[0].get('cover', '')))
+        except:
+            pass
+    
+    # 尝试从 __INITIAL_STATE__ 或其他 JS 变量获取
     script_tags = soup.find_all('script')
     for script in script_tags:
         script_content = script.string
         if script_content:
-            match = re.search(r'"pic":"([^"]+)"', script_content)
-            if match:
-                return decode_unicode_url(normalize_url(match.group(1)))
-            match = re.search(r'cover":"([^"]+)"', script_content)
-            if match:
-                return decode_unicode_url(normalize_url(match.group(1)))
-            match = re.search(r'"thumbnail":"([^"]+)"', script_content)
-            if match:
-                return decode_unicode_url(normalize_url(match.group(1)))
-            match = re.search(r'window\.__INITIAL_STATE__\s*=\s*({.*?});', script_content, re.DOTALL)
-            if match:
+            # 搜索 arc (B 站视频数据)
+            arc_match = re.search(r'"arc":\s*(\{[^}]+\})', script_content)
+            if arc_match:
                 try:
-                    data = json.loads(match.group(1))
-                    if 'videoData' in data and 'pic' in data['videoData']:
-                        return decode_unicode_url(normalize_url(data['videoData']['pic']))
-                    if 'p' in data and isinstance(data['p'], dict):
-                        for key in ['pic', 'cover', 'thumbnail']:
-                            if key in data['p']:
-                                return decode_unicode_url(normalize_url(data['p'][key]))
+                    arc_data = json.loads(arc_match.group(1))
+                    if 'pic' in arc_data:
+                        return decode_unicode_url(normalize_url(arc_data['pic']))
                 except:
                     pass
+            
+            # 搜索常见的图片字段
+            match = re.search(r'"pic"\s*:\s*"([^"]+)"', script_content)
+            if match:
+                return decode_unicode_url(normalize_url(match.group(1)))
+            
+            match = re.search(r'"cover"\s*:\s*"([^"]+)"', script_content)
+            if match:
+                return decode_unicode_url(normalize_url(match.group(1)))
+            
+            match = re.search(r'"thumbnail"\s*:\s*"([^"]+)"', script_content)
+            if match:
+                return decode_unicode_url(normalize_url(match.group(1)))
     
-    return None
+    # 如果网页解析失败，尝试使用 API
+    return extract_cover_bilibili_api(url)
 
 def extract_cover_douyin(html_content, url):
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -359,13 +408,23 @@ def identify_platform(url):
 def extract_cover(url):
     platform = identify_platform(url)
     
+    # 根据平台使用不同的请求头
+    headers = HEADERS.copy()
+    if platform == 'bilibili':
+        headers['Referer'] = 'https://www.bilibili.com/'
+    elif platform == 'douyin':
+        headers['Referer'] = 'https://www.douyin.com/'
+    elif platform == 'xiaohongshu':
+        headers['Referer'] = 'https://www.xiaohongshu.com/'
+    
     try:
-        response = requests.get(url, headers=HEADERS, timeout=10, allow_redirects=True)
+        response = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
         response.raise_for_status()
         html_content = response.text
     except Exception as e:
         print(f"[DEBUG] Failed to fetch page for {platform}: {str(e)}")
-        return None
+        # 当获取页面失败时，直接返回原始 URL 作为封面
+        return url
     
     extractors = {
         'bilibili': extract_cover_bilibili,
@@ -383,7 +442,16 @@ def extract_cover(url):
     extractor = extractors.get(platform, extract_cover_general)
     cover = extractor(html_content, url)
     
-    if cover and not cover.startswith(('http://', 'https://')):
+    # 如果 B 站的网页解析也失败，尝试 API
+    if not cover and platform == 'bilibili':
+        cover = extract_cover_bilibili_api(url)
+    
+    # 如果所有方法都失败，直接返回原始 URL
+    if not cover:
+        print(f"[DEBUG] All extraction methods failed for {platform}, returning original URL")
+        return url
+    
+    if not cover.startswith(('http://', 'https://')):
         parsed = urlparse(url)
         if cover.startswith('//'):
             cover = f"{parsed.scheme}:{cover}"
