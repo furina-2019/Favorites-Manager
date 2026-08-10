@@ -1,0 +1,196 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  /* Responsive base: the whole UI is sized in rem, so this single value
+     scales it. 16px on desktop, 15px on tablets, 14px on phones (below). */
+  font-size: 16px;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Shared layout constants (consumed via inline styles with var(...)) */
+  --app-header-h: 64px;
+  --app-footer-h: 48px;
+  --page-pad: 1.5rem;
+  --page-gap: 1rem;
+  --item-cover-h: 8.4375rem;
+}
+
+/* Small tablets / large phones */
+@media (max-width: 768px) {
+  :root {
+    font-size: 15px;
+    --app-header-h: 56px;
+    --app-footer-h: 44px;
+    --page-pad: 1.25rem;
+  }
+}
+
+/* Phones */
+@media (max-width: 480px) {
+  :root {
+    font-size: 14px;
+    --app-header-h: 52px;
+    --app-footer-h: 40px;
+    --page-pad: 0.75rem;
+    /* Shorter item cover so two cards fit side by side */
+    --item-cover-h: 6rem;
+  }
+
+  /* Keep only the icons of the top-right nav buttons so the header fits */
+  .nav-btn-label {
+    display: none;
+  }
+
+  /* Two-per-row cards: hide the secondary details to keep them compact */
+  .item-card-detail,
+  .item-card-cat,
+  .folder-card-date {
+    display: none !important;
+  }
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* Light theme */
+.light-theme {
+  color: #213547;
+  background-color: #ffffff;
+}
+
+/* Dark theme */
+.dark-theme {
+  color: #ffffff;
+  background-color: #1a1a1a;
+}
+
+/* Smooth transitions */
+* {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ===== Page transitions ===== */
+.page-stack {
+  position: relative;
+}
+
+.page-enter {
+  position: relative;
+  z-index: 2;
+}
+
+.page-exit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Other pages: new page slides in moving left (from the right edge) /
+   old page slides out moving right (to the right edge) */
+.page-slide-in {
+  animation: page-slide-in 0.28s ease-out backwards;
+}
+
+.page-slide-out {
+  animation: page-slide-out 0.28s ease-in forwards;
+}
+
+/* Items page: expand from / shrink to the folder card center */
+.page-expand-in {
+  animation: page-expand-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.page-shrink-out {
+  animation: page-shrink-out 0.32s cubic-bezier(0.55, 0, 1, 0.45) forwards;
+}
+
+/* Enter animations deliberately avoid opacity: even if an animation is
+   paused or blocked, the incoming page stays visible */
+@keyframes page-slide-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes page-slide-out {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(100%); opacity: 0.5; }
+}
+
+@keyframes page-expand-in {
+  from { transform: scale(0.05); }
+  to { transform: scale(1); }
+}
+
+@keyframes page-shrink-out {
+  from { transform: scale(1); opacity: 1; }
+  to { transform: scale(0.05); opacity: 0; }
+}
+
+/* After the enter animation (or its timeout) the page must always sit in its
+   natural, fully visible state */
+.page-settled {
+  animation: none !important;
+}
+
+/* The items page covers the whole viewport (header included), so it visibly
+   expands over / shrinks back into the folder card and sits on top. Padding
+   is handled by the page content itself so its toolbar can sit flush at the
+   top and stay fixed while the content below scrolls. */
+.page-fixed {
+  position: fixed !important;
+  inset: 0;
+  z-index: 1000;
+  overflow-y: auto;
+}
+
+.light-theme .page-fixed {
+  background: #f5f5f5;
+}
+
+.dark-theme .page-fixed {
+  background: #1a1a1a;
+}
+
+/* ===== List <-> mind map view switch (inside the items page) ===== */
+.view-switch {
+  animation: view-switch-in 0.25s ease-out;
+}
+
+@keyframes view-switch-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Item highlight (jump from mind map) ===== */
+@keyframes item-highlight-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 4px var(--hl-color, #1890ff), 0 0 24px var(--hl-color, #1890ff);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 10px var(--hl-color, #1890ff), 0 0 44px var(--hl-color, #1890ff);
+    transform: scale(1.02);
+  }
+}

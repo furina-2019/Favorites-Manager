@@ -1,0 +1,1 @@
+ollama launch opencode
