@@ -51,6 +51,15 @@ if __name__ == "__main__":
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = browsers_path
     print(f"[DEBUG] PLAYWRIGHT_BROWSERS_PATH set to: {browsers_path}")
     
+    # 确保 llama_cpp/lib 目录存在（PyInstaller 打包后可能需要）
+    try:
+        llama_lib_dir = resource_path("llama_cpp/lib")
+        if not os.path.exists(llama_lib_dir):
+            os.makedirs(llama_lib_dir, exist_ok=True)
+            print(f"[DEBUG] Created llama_cpp/lib directory: {llama_lib_dir}")
+    except Exception as e:
+        print(f"[DEBUG] Failed to create llama_cpp/lib directory: {e}")
+    
     app = QApplication(sys.argv)
     
     # 加载配置文件获取语言设置
