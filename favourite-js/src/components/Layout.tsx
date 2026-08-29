@@ -70,7 +70,7 @@ export default function Layout() {
               if (pathname !== '/') navigate('/')
             }}
           >
-            📚 Favourite
+            📚 {t('window_title')}
           </Title>
         </div>
 
@@ -127,7 +127,7 @@ export default function Layout() {
           padding: '0 var(--page-pad)'
         }}
       >
-        v0.1.0-alpha | {t('footer_text')}
+        v1.0.0 | Made By FuQian
       </Footer>
     </AntLayout>
   )

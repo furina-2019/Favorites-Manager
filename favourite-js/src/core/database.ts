@@ -1,5 +1,7 @@
-// Simple storage layer using localStorage for persistence
-// This provides a mock database that can be replaced with sql.js later
+// Persistent storage layer.
+// On PC (Electron): writes a JSON file to AppData/Local/Favourites-Manager.
+// On Android / Web: uses the built-in storage.
+import { storage } from '../utils/storage'
 
 export interface Folder {
   id: number
@@ -37,48 +39,48 @@ const STORAGE_KEYS = {
 
 // Initialize storage with defaults if empty
 function initStorage(): void {
-  if (!localStorage.getItem(STORAGE_KEYS.FOLDERS)) {
-    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify([]))
+  if (!storage.getItem(STORAGE_KEYS.FOLDERS)) {
+    storage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify([]))
   }
-  if (!localStorage.getItem(STORAGE_KEYS.ITEMS)) {
-    localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify([]))
+  if (!storage.getItem(STORAGE_KEYS.ITEMS)) {
+    storage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify([]))
   }
-  if (!localStorage.getItem(STORAGE_KEYS.NEXT_FOLDER_ID)) {
-    localStorage.setItem(STORAGE_KEYS.NEXT_FOLDER_ID, '1')
+  if (!storage.getItem(STORAGE_KEYS.NEXT_FOLDER_ID)) {
+    storage.setItem(STORAGE_KEYS.NEXT_FOLDER_ID, '1')
   }
-  if (!localStorage.getItem(STORAGE_KEYS.NEXT_ITEM_ID)) {
-    localStorage.setItem(STORAGE_KEYS.NEXT_ITEM_ID, '1')
+  if (!storage.getItem(STORAGE_KEYS.NEXT_ITEM_ID)) {
+    storage.setItem(STORAGE_KEYS.NEXT_ITEM_ID, '1')
   }
-  if (!localStorage.getItem(STORAGE_KEYS.TAGS)) {
-    localStorage.setItem(STORAGE_KEYS.TAGS, JSON.stringify([]))
+  if (!storage.getItem(STORAGE_KEYS.TAGS)) {
+    storage.setItem(STORAGE_KEYS.TAGS, JSON.stringify([]))
   }
 }
 
 // Tag pool operations (global, shared by folders and items)
 export async function getAllTags(): Promise<string[]> {
   initStorage()
-  return JSON.parse(localStorage.getItem(STORAGE_KEYS.TAGS) || '[]')
+  return JSON.parse(storage.getItem(STORAGE_KEYS.TAGS) || '[]')
 }
 
 export async function createTag(name: string): Promise<void> {
   initStorage()
   const trimmed = name.trim()
   if (!trimmed) return
-  const tags: string[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.TAGS) || '[]')
+  const tags: string[] = JSON.parse(storage.getItem(STORAGE_KEYS.TAGS) || '[]')
   if (!tags.includes(trimmed)) {
     tags.push(trimmed)
-    localStorage.setItem(STORAGE_KEYS.TAGS, JSON.stringify(tags))
+    storage.setItem(STORAGE_KEYS.TAGS, JSON.stringify(tags))
   }
 }
 
 /** Removes a tag everywhere: from the pool, all folders and all items */
 export async function deleteTag(name: string): Promise<void> {
   initStorage()
-  const tags: string[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.TAGS) || '[]')
-  localStorage.setItem(STORAGE_KEYS.TAGS, JSON.stringify(tags.filter(t => t !== name)))
+  const tags: string[] = JSON.parse(storage.getItem(STORAGE_KEYS.TAGS) || '[]')
+  storage.setItem(STORAGE_KEYS.TAGS, JSON.stringify(tags.filter(t => t !== name)))
 
-  const folders: Folder[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
-  const items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  const folders: Folder[] = JSON.parse(storage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
+  const items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
   let changed = false
   for (const folder of folders) {
     if (folder.tags?.includes(name)) {
@@ -93,21 +95,21 @@ export async function deleteTag(name: string): Promise<void> {
     }
   }
   if (changed) {
-    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
-    localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
+    storage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
+    storage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
   }
 }
 
 export async function initDatabase(): Promise<void> {
   initStorage()
-  console.log('[DB] Storage initialized (using localStorage)')
+  console.log('[DB] Storage initialized (using storage)')
 }
 
 // Folder operations
 export async function addFolder(name: string, tags: string[] = []): Promise<number> {
   initStorage()
-  const folders: Folder[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
-  let nextId = parseInt(localStorage.getItem(STORAGE_KEYS.NEXT_FOLDER_ID) || '1')
+  const folders: Folder[] = JSON.parse(storage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
+  let nextId = parseInt(storage.getItem(STORAGE_KEYS.NEXT_FOLDER_ID) || '1')
   
   const newFolder: Folder = {
     id: nextId,
@@ -118,16 +120,16 @@ export async function addFolder(name: string, tags: string[] = []): Promise<numb
   }
   
   folders.push(newFolder)
-  localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
-  localStorage.setItem(STORAGE_KEYS.NEXT_FOLDER_ID, String(nextId + 1))
+  storage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
+  storage.setItem(STORAGE_KEYS.NEXT_FOLDER_ID, String(nextId + 1))
   
   return newFolder.id
 }
 
 export async function getFolders(): Promise<Folder[]> {
   initStorage()
-  const folders: Folder[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
-  const items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  const folders: Folder[] = JSON.parse(storage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
+  const items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
   
   // Add item count to each folder
   const foldersWithCount = folders.map(folder => ({
@@ -143,27 +145,27 @@ export async function getFolders(): Promise<Folder[]> {
 
 export async function renameFolder(id: number, name: string, tags?: string[]): Promise<void> {
   initStorage()
-  const folders: Folder[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
+  const folders: Folder[] = JSON.parse(storage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
   
   const index = folders.findIndex(f => f.id === id)
   if (index !== -1) {
     folders[index].name = name
     if (tags !== undefined) folders[index].tags = tags
-    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
+    storage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
   }
 }
 
 export async function deleteFolder(id: number): Promise<void> {
   initStorage()
-  let folders: Folder[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
-  let items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  let folders: Folder[] = JSON.parse(storage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
+  let items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
   
   // Remove folder and its items
   folders = folders.filter(f => f.id !== id)
   items = items.filter(item => item.folder_id !== id)
   
-  localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
-  localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
+  storage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
+  storage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
 }
 
 // Item operations
@@ -178,8 +180,8 @@ export async function addItem(
   tags: string[] = []
 ): Promise<number> {
   initStorage()
-  const items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
-  let nextId = parseInt(localStorage.getItem(STORAGE_KEYS.NEXT_ITEM_ID) || '1')
+  const items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  let nextId = parseInt(storage.getItem(STORAGE_KEYS.NEXT_ITEM_ID) || '1')
   
   const newItem: Item = {
     id: nextId,
@@ -196,15 +198,15 @@ export async function addItem(
   }
   
   items.push(newItem)
-  localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
-  localStorage.setItem(STORAGE_KEYS.NEXT_ITEM_ID, String(nextId + 1))
+  storage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
+  storage.setItem(STORAGE_KEYS.NEXT_ITEM_ID, String(nextId + 1))
   
   return newItem.id
 }
 
 export async function getItemsByFolder(folderId: number): Promise<Item[]> {
   initStorage()
-  const items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  const items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
   
   return items
     .filter(item => item.folder_id === folderId)
@@ -214,7 +216,7 @@ export async function getItemsByFolder(folderId: number): Promise<Item[]> {
 /** All items across every folder */
 export async function getAllItems(): Promise<Item[]> {
   initStorage()
-  return JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  return JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
 }
 
 /** The most recently added items (newest first) */
@@ -241,11 +243,11 @@ export async function getHistoryPool(): Promise<Item[]> {
 /** Records that an item was opened (used by the history ranking) */
 export async function incrementItemClicks(id: number): Promise<void> {
   initStorage()
-  const items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  const items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
   const index = items.findIndex(i => i.id === id)
   if (index !== -1) {
     items[index].click_count = (items[index].click_count || 0) + 1
-    localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
+    storage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
   }
 }
 
@@ -259,7 +261,7 @@ export async function updateItem(
   tags?: string[]
 ): Promise<void> {
   initStorage()
-  const items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  const items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
   
   const index = items.findIndex(i => i.id === id)
   if (index !== -1) {
@@ -270,32 +272,32 @@ export async function updateItem(
     items[index].summary = summary || null
     if (tags !== undefined) items[index].tags = tags
     
-    localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
+    storage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
   }
 }
 
 export async function deleteItem(id: number): Promise<void> {
   initStorage()
-  let items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  let items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
   
   items = items.filter(i => i.id !== id)
-  localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
+  storage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
 }
 
 export async function deleteItems(ids: number[]): Promise<void> {
   if (ids.length === 0) return
   
   initStorage()
-  let items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  let items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
   
   items = items.filter(i => !ids.includes(i.id))
-  localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
+  storage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
 }
 
 // Search items
 export async function searchItems(folderId: number, query: string): Promise<Item[]> {
   initStorage()
-  const items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  const items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
   const lowerQuery = query.toLowerCase()
   
   return items
@@ -313,9 +315,9 @@ export async function searchItems(folderId: number, query: string): Promise<Item
 // Export/Import
 export function exportData(): string {
   return JSON.stringify({
-    folders: JSON.parse(localStorage.getItem(STORAGE_KEYS.FOLDERS) || '[]'),
-    items: JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]'),
-    tags: JSON.parse(localStorage.getItem(STORAGE_KEYS.TAGS) || '[]'),
+    folders: JSON.parse(storage.getItem(STORAGE_KEYS.FOLDERS) || '[]'),
+    items: JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]'),
+    tags: JSON.parse(storage.getItem(STORAGE_KEYS.TAGS) || '[]'),
     exported_at: new Date().toISOString()
   })
 }
@@ -324,82 +326,82 @@ export function importData(jsonString: string): void {
   const data = JSON.parse(jsonString)
   
   if (data.tags && Array.isArray(data.tags)) {
-    localStorage.setItem(STORAGE_KEYS.TAGS, JSON.stringify(data.tags))
+    storage.setItem(STORAGE_KEYS.TAGS, JSON.stringify(data.tags))
   }
   
   if (data.folders && Array.isArray(data.folders)) {
-    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(data.folders))
+    storage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(data.folders))
     
     // Update next folder ID
     const maxFolderId = Math.max(...data.folders.map((f: Folder) => f.id), 0)
-    localStorage.setItem(STORAGE_KEYS.NEXT_FOLDER_ID, String(maxFolderId + 1))
+    storage.setItem(STORAGE_KEYS.NEXT_FOLDER_ID, String(maxFolderId + 1))
   }
   
   if (data.items && Array.isArray(data.items)) {
-    localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(data.items))
+    storage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(data.items))
     
     // Update next item ID
     const maxItemId = Math.max(...data.items.map((i: Item) => i.id), 0)
-    localStorage.setItem(STORAGE_KEYS.NEXT_ITEM_ID, String(maxItemId + 1))
+    storage.setItem(STORAGE_KEYS.NEXT_ITEM_ID, String(maxItemId + 1))
   }
 }
 
 // Clear all data (for testing)
 export function clearAllData(): void {
-  localStorage.removeItem(STORAGE_KEYS.FOLDERS)
-  localStorage.removeItem(STORAGE_KEYS.ITEMS)
-  localStorage.removeItem(STORAGE_KEYS.TAGS)
-  localStorage.removeItem(STORAGE_KEYS.NEXT_FOLDER_ID)
-  localStorage.removeItem(STORAGE_KEYS.NEXT_ITEM_ID)
+  storage.removeItem(STORAGE_KEYS.FOLDERS)
+  storage.removeItem(STORAGE_KEYS.ITEMS)
+  storage.removeItem(STORAGE_KEYS.TAGS)
+  storage.removeItem(STORAGE_KEYS.NEXT_FOLDER_ID)
+  storage.removeItem(STORAGE_KEYS.NEXT_ITEM_ID)
   initStorage()
 }
 
 // Password protection for folders
 export async function setFolderPassword(folderId: number, passwordHash: string, salt: string): Promise<void> {
   initStorage()
-  const folders: Folder[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
+  const folders: Folder[] = JSON.parse(storage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
   
   const index = folders.findIndex(f => f.id === folderId)
   if (index !== -1) {
     folders[index].password_hash = passwordHash
     folders[index].password_salt = salt
-    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
+    storage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
   }
 }
 
 export async function removeFolderPassword(folderId: number): Promise<void> {
   initStorage()
-  const folders: Folder[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
+  const folders: Folder[] = JSON.parse(storage.getItem(STORAGE_KEYS.FOLDERS) || '[]')
   
   const index = folders.findIndex(f => f.id === folderId)
   if (index !== -1) {
     folders[index].password_hash = null
     folders[index].password_salt = null
-    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
+    storage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders))
   }
 }
 
 // Password protection for items
 export async function setItemPassword(itemId: number, passwordHash: string, salt: string): Promise<void> {
   initStorage()
-  const items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  const items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
   
   const index = items.findIndex(i => i.id === itemId)
   if (index !== -1) {
     items[index].password_hash = passwordHash
     items[index].password_salt = salt
-    localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
+    storage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
   }
 }
 
 export async function removeItemPassword(itemId: number): Promise<void> {
   initStorage()
-  const items: Item[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ITEMS) || '[]')
+  const items: Item[] = JSON.parse(storage.getItem(STORAGE_KEYS.ITEMS) || '[]')
   
   const index = items.findIndex(i => i.id === itemId)
   if (index !== -1) {
     items[index].password_hash = null
     items[index].password_salt = null
-    localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
+    storage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items))
   }
 }

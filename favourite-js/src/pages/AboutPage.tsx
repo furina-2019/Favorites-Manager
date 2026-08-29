@@ -35,7 +35,7 @@ export default function AboutPage() {
 
         <Descriptions column={1} bordered>
           <Descriptions.Item label={t('version')}>
-            v0.2.0-beta
+            v1.0.0
           </Descriptions.Item>
           <Descriptions.Item label={t('license')}>
             MIT License

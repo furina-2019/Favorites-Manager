@@ -228,7 +228,7 @@ export default function MindMapView({
       const catNode: MindNode = {
         id: `cat-${seq++}`,
         kind: 'category',
-        label: category || t('uncategorized'),
+        label: category ? (t(`category_${category.toLowerCase()}`) || category) : t('uncategorized'),
         angle: 0,
         x: 0,
         y: 0,
@@ -252,7 +252,7 @@ export default function MindMapView({
             label: item.title || item.url || t('untitled'),
             subLabel: item.url || undefined,
             detail: item.category
-              ? `${item.category} · ${new Date(item.created_at).toLocaleDateString()}`
+              ? `${t(`category_${item.category.toLowerCase()}`) || item.category} · ${new Date(item.created_at).toLocaleDateString()}`
               : new Date(item.created_at).toLocaleDateString(),
             item,
             angle: 0,

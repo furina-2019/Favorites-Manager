@@ -461,7 +461,7 @@ export default function ItemCard({
                </Tag>
                
                {item.category && (
-                 <Tag className="item-card-cat" style={{ margin: 0 }}>{highlightText(item.category, searchQuery)}</Tag>
+                 <Tag className="item-card-cat" style={{ margin: 0 }}>{highlightText(t(`category_${item.category.toLowerCase()}`) || item.category, searchQuery)}</Tag>
                )}
                
                {!isLocked && hasSummary && (

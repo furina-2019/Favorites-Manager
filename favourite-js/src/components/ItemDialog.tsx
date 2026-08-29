@@ -170,7 +170,9 @@ export default function ItemDialog({
   
   const categories = [
     'Software', 'Programming', 'Design', 'Video', 
-    'Music', 'Document', 'Image', 'Other'
+    'Music', 'Document', 'Image', 'Social', 'News',
+    'Shopping', 'Search', 'Education', 'Game', 'AI',
+    'Tool', 'Reading', 'Other'
   ]
 
   useEffect(() => {
@@ -237,7 +239,7 @@ export default function ItemDialog({
     setRecognizing(true)
     try {
       const { title, category, summary, urlOrPath } = await autoRecognizeItem(url, itemType)
-      // Update form fields with recognized data (cover is set manually)
+      // Update form fields with recognized data
       form.setFieldsValue({
         title: title || '',
         url: urlOrPath || url,
@@ -246,9 +248,37 @@ export default function ItemDialog({
       })
       message.success(t('auto_recognize_success'))
 
-      // Also try to extract the cover from the page metadata - best effort,
-      // never blocks the recognition result.
-      if (itemType === 'link' && !form.getFieldValue('cover')) {
+      // Auto-set cover to preset cover based on recognized category
+      // Map recognized category to preset cover key
+      const categoryToPresetKey: Record<string, string> = {
+        'Video': 'video',
+        'Image': 'image',
+        'Music': 'music',
+        'Document': 'document',
+        'Software': 'software',
+        'Programming': 'programming',
+        'Design': 'design',
+        'Social': 'social',
+        'News': 'news',
+        'Shopping': 'shopping',
+        'Search': 'search',
+        'Education': 'education',
+        'Game': 'game',
+        'AI': 'ai',
+        'Tool': 'tool',
+        'Reading': 'reading',
+        'Other': 'other',
+      }
+      const presetKey = categoryToPresetKey[category] || 'other'
+      const presetCover = presetCoverValue(presetKey)
+      form.setFieldsValue({ cover: presetCover })
+      setCoverPreview(null)
+      setCoverFile(null)
+      setCoverType('preset')
+
+      // For links, also try to extract the cover from the page metadata - best effort,
+      // never blocks the recognition result. If successful, it overrides the preset.
+      if (itemType === 'link') {
         try {
           const cover = await extractCoverFromUrl(url)
           if (cover) {
@@ -496,7 +526,7 @@ export default function ItemDialog({
             }}
           >
             <Radio.Button value="local">{t('local_image')}</Radio.Button>
-            <Radio.Button value="url">{t('cover_by_url')}</Radio.Button>
+            <Radio.Button value="url" disabled>{t('cover_by_url')}</Radio.Button>
             <Radio.Button value="preset">{t('preset_cover')}</Radio.Button>
           </Radio.Group>
         </Form.Item>
