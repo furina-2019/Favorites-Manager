@@ -11,6 +11,15 @@ import {
   CodeOutlined,
   BgColorsOutlined,
   StarOutlined,
+  TeamOutlined,
+  ReadOutlined,
+  ShoppingCartOutlined,
+  SearchOutlined,
+  ExperimentOutlined,
+  TrophyOutlined,
+  RobotOutlined,
+  ToolOutlined,
+  BookOutlined,
 } from '@ant-design/icons'
 import type { ComponentType, CSSProperties } from 'react'
 
@@ -34,6 +43,15 @@ export const PRESET_COVERS: PresetCover[] = [
   { key: 'software', color: '#52C41A', icon: AppstoreOutlined, i18nKey: 'preset_software' },
   { key: 'programming', color: '#13C2C2', icon: CodeOutlined, i18nKey: 'preset_programming' },
   { key: 'design', color: '#EB2F96', icon: BgColorsOutlined, i18nKey: 'preset_design' },
+  { key: 'social', color: '#1890FF', icon: TeamOutlined, i18nKey: 'preset_social' },
+  { key: 'news', color: '#FA541C', icon: ReadOutlined, i18nKey: 'preset_news' },
+  { key: 'shopping', color: '#F5222D', icon: ShoppingCartOutlined, i18nKey: 'preset_shopping' },
+  { key: 'search', color: '#722ED1', icon: SearchOutlined, i18nKey: 'preset_search' },
+  { key: 'education', color: '#13C2C2', icon: ExperimentOutlined, i18nKey: 'preset_education' },
+  { key: 'game', color: '#FA8C16', icon: TrophyOutlined, i18nKey: 'preset_game' },
+  { key: 'ai', color: '#52C41A', icon: RobotOutlined, i18nKey: 'preset_ai' },
+  { key: 'tool', color: '#8C8C8C', icon: ToolOutlined, i18nKey: 'preset_tool' },
+  { key: 'reading', color: '#EB2F96', icon: BookOutlined, i18nKey: 'preset_reading' },
   { key: 'other', color: '#8C8C8C', icon: StarOutlined, i18nKey: 'preset_other' },
 ]
 

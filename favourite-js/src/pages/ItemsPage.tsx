@@ -45,7 +45,7 @@ export default function ItemsPage() {
     removeItems,
     setCurrentFolder
   } = useDBStore()
-  const { darkMode } = useUIStore()
+  const { darkMode, language } = useUIStore()
   const screens = Grid.useBreakpoint()
   // Below the md breakpoint everything collapses to icon-only controls
   const isMobile = screens.md === false
@@ -285,7 +285,7 @@ export default function ItemsPage() {
     { type: 'divider' },
     ...categories.map(cat => ({
       key: cat,
-      label: cat,
+      label: t(`category_${cat.toLowerCase()}`) || cat,
       onClick: () => setFilterCategory(cat)
     }))
   ]
@@ -407,7 +407,7 @@ export default function ItemsPage() {
             <Tooltip title={t('filter_by_category')}>
               <Dropdown menu={{ items: filterMenuItems }}>
                 <Button icon={<FilterOutlined />}>
-                  {!isMobile && (filterCategory || t('filter_all'))}
+                  {!isMobile && (filterCategory ? (t(`category_${filterCategory.toLowerCase()}`) || filterCategory) : t('filter_all'))}
                 </Button>
               </Dropdown>
             </Tooltip>
@@ -423,7 +423,7 @@ export default function ItemsPage() {
           <Tooltip title={t('add_item')}>
             <Button
               type="primary"
-              icon={<PlusOutlined />}
+              icon={language === 'en' ? undefined : <PlusOutlined />}
               onClick={handleAddItem}
             />
           </Tooltip>
@@ -501,7 +501,7 @@ export default function ItemsPage() {
               >
                 <Space>
                   <Tooltip title={t('add_item')}>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={handleAddItem}>
+                    <Button type="primary" icon={language === 'en' ? undefined : <PlusOutlined />} onClick={handleAddItem}>
                       {t('add_item_btn')}
                     </Button>
                   </Tooltip>

@@ -3,12 +3,12 @@ const en = {
   Home: 'Home',
   
   // Window
-  window_title: 'Favorites Manager',
+  window_title: 'Favourites-Manager',
   
   // Folders Page
   Folders: 'Folders',
   folder_search_placeholder: 'Search folders...',
-  add_folder_btn: '+ Add Folder',
+  add_folder_btn: 'Add Folder',
   add_folder: 'Add Folder',
   recent_favorites: 'Recent Favorites',
   history_museum: 'History Gallery',
@@ -18,7 +18,7 @@ const en = {
   items: 'items',
   selected: 'selected',
   item_search_placeholder: 'Search items...',
-  add_item_btn: '+ Add Item',
+  add_item_btn: 'Add Item',
   mind_map: 'Mind Map',
   list_view: 'List View',
   delete_selected: 'Delete Selected',
@@ -31,7 +31,7 @@ const en = {
   select_folder: 'Select Folder',
   
   // Settings
-  settings_title: '⚙ Settings',
+  settings_title: 'Settings',
   display_settings: 'Display Settings',
   language: 'Language',
   language_title: 'Language',
@@ -154,6 +154,15 @@ const en = {
   category_music: 'Music',
   category_document: 'Document',
   category_image: 'Image',
+  category_social: 'Social',
+  category_news: 'News',
+  category_shopping: 'Shopping',
+  category_search: 'Search',
+  category_education: 'Education',
+  category_game: 'Game',
+  category_ai: 'AI',
+  category_tool: 'Tool',
+  category_reading: 'Reading',
   category_other: 'Other',
   uncategorized: 'Uncategorized',
   
@@ -239,6 +248,15 @@ const en = {
     preset_software: 'Software',
     preset_programming: 'Programming',
     preset_design: 'Design',
+    preset_social: 'Social',
+    preset_news: 'News',
+    preset_shopping: 'Shopping',
+    preset_search: 'Search',
+    preset_education: 'Education',
+    preset_game: 'Game',
+    preset_ai: 'AI',
+    preset_tool: 'Tool',
+    preset_reading: 'Reading',
     preset_other: 'Other',
     adjust_cover: 'Adjust cover',
     click_and_drag_to_move: 'Click and drag to move',
@@ -266,7 +284,7 @@ const en = {
   help_add_content: 'Click + Add Item to add a new favorite. You can add a link URL or local file path.',
   
   // Footer
-  footer_text: 'Made with ❤️ using React and TypeScript',
+  footer_text: 'Made by FuQian',
 }
 
 export default en

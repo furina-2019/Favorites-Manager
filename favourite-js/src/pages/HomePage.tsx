@@ -26,7 +26,7 @@ export default function HomePage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const screens = useBreakpoint()
-  const { darkMode } = useUIStore()
+  const { darkMode, language } = useUIStore()
   
   const { 
     folders, 
@@ -198,7 +198,7 @@ export default function HomePage() {
           <Tooltip title={t('add_folder')}>
             <Button
               type="primary"
-              icon={<PlusOutlined />}
+              icon={language === 'en' ? undefined : <PlusOutlined />}
               onClick={handleAddFolder}
             >
               {!isMobile && t('add_folder_btn')}
@@ -286,7 +286,7 @@ export default function HomePage() {
             <Tooltip title={t('add_folder')}>
               <Button
                 type="primary"
-                icon={<FolderAddOutlined />}
+                icon={language === 'en' ? undefined : <FolderAddOutlined />}
                 onClick={handleAddFolder}
               >
                 {t('add_folder_btn')}

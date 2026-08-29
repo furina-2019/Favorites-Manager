@@ -47,7 +47,7 @@ export default function SettingsPage() {
             type={language === 'en' ? 'primary' : 'default'}
             onClick={() => handleLanguageChange('en')}
           >
-            🇺🇸 {t('english')}
+            🇬🇧 {t('english')}
           </Button>
           <Button
             type={language === 'zh' ? 'primary' : 'default'}
