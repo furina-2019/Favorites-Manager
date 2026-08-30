@@ -83,7 +83,7 @@ export const isGradientCover = (value?: string | null): boolean =>
 export const isImageCover = (value?: string | null): boolean =>
   !!value && !isPresetCover(value) && !isGradientCover(value)
 
-// The Vite dev-server plugin (vite.config.ts, /__cover/img) proxies cover
+// The server (/api/cover-img) proxies cover
 // images server-side. Remote http(s) covers are routed through it so
 // hotlink-protected CDNs (hdslb, bilibili, etc.) load reliably. The stored
 // value stays the original URL; only the rendered src is rewritten.
@@ -91,7 +91,7 @@ export const isImageCover = (value?: string | null): boolean =>
 export const proxiedCoverUrl = (value?: string | null): string => {
   if (!value || value.startsWith('data:')) return value || ''
   if (value.startsWith('http://') || value.startsWith('https://')) {
-    return `/__cover/img?url=${encodeURIComponent(value)}`
+    return `/api/cover-img?url=${encodeURIComponent(value)}`
   }
   return value
 }

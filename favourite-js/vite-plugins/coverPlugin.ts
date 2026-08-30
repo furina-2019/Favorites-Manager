@@ -1,17 +1,17 @@
-// Vite dev-server plugin — registers /__cover/* middleware endpoints.
-// Imports cover extraction logic from ./coverExtract.ts
-// Uses cache + rate limiting via ./rateLimit.ts
+// Vite dev-server plugin — registers /api/* middleware endpoints for dev mode.
+// In production, Cloudflare Pages Functions handle these routes.
+// Imports cover extraction logic from ../functions/coverExtract.ts
 
 import type { Plugin } from 'vite'
 import {
   BROWSER_HEADERS, MAX_BODY, TIMEOUT_MS,
-  toHttps, fetchBody, fetchProtected,
+  toHttps, fetchProtected,
   extractMetaImage, extractBiliPageCover, getBvid,
-} from './coverExtract.js'
+} from '../functions/coverExtract.js'
 import {
-  imageCache, extractDomain,
+  imageCache,
   RateLimitError, UpstreamBlockedError,
-} from './rateLimit.js'
+} from '../functions/rateLimit.js'
 
 // ── Friendly error messages for known error types ────────────────────────────
 
@@ -35,14 +35,13 @@ function friendlyError(err: unknown): { status: number; message: string } {
   return { status: 502, message: msg || '封面提取失败' }
 }
 
-// ── Bilibili cover extraction (API -> page og:image -> player API) ────────────
-// Uses fetchProtected for cache + rate limit + dedup
+// ── Bilibili cover extraction (API → page og:image → player API) ────────────
 
 async function extractBilibiliCover(videoUrl: string): Promise<string> {
   const bvid = getBvid(videoUrl)
   if (!bvid) throw new Error('no bvid in url')
 
-  // 1) Official API (most reliable, cache per bvid)
+  // 1) Official API
   try {
     const api = await fetchProtected(
       'bili-api:' + bvid,
@@ -56,11 +55,10 @@ async function extractBilibiliCover(videoUrl: string): Promise<string> {
       if (j?.code === 0 && typeof j.data?.pages?.[0]?.first_frame === 'string' && j.data.pages[0].first_frame) return toHttps(j.data.pages[0].first_frame)
     }
   } catch (e) {
-    // If rate-limited or blocked, don't try fallbacks — they'll hit the same limit
     if (e instanceof RateLimitError || e instanceof UpstreamBlockedError) throw e
   }
 
-  // 2) Video page HTML (separate domain path, still bilibili.com)
+  // 2) Video page HTML
   try {
     const page = await fetchProtected(
       'bili-page:' + bvid,
@@ -75,7 +73,7 @@ async function extractBilibiliCover(videoUrl: string): Promise<string> {
     if (e instanceof RateLimitError || e instanceof UpstreamBlockedError) throw e
   }
 
-  // 3) Player API (less strict, but still bilibili.com domain)
+  // 3) Player API
   try {
     const api2 = await fetchProtected(
       'bili-player:' + bvid,
@@ -110,8 +108,8 @@ export default function coverProxyPlugin(): Plugin {
   return {
     name: 'cover-proxy',
     configureServer(server) {
-      // /__cover/extract?url=...  ->  JSON { cover } or { error }
-      server.middlewares.use('/__cover/extract', async (req, res) => {
+      // /api/extract-cover?url=...  →  JSON { cover } or { error }
+      server.middlewares.use('/api/extract-cover', async (req, res) => {
         const reqUrl = new URL(req.url || '/', 'http://localhost')
         const raw = reqUrl.searchParams.get('url')
         if (!raw) { res.statusCode = 400; res.end('missing url'); return }
@@ -133,8 +131,8 @@ export default function coverProxyPlugin(): Plugin {
         }
       })
 
-      // /__cover/img?url=...  ->  proxied image binary (with cache)
-      server.middlewares.use('/__cover/img', async (req, res) => {
+      // /api/cover-img?url=...  →  proxied image binary (with cache)
+      server.middlewares.use('/api/cover-img', async (req, res) => {
         const reqUrl = new URL(req.url || '/', 'http://localhost')
         const raw = reqUrl.searchParams.get('url')
         if (!raw) { res.statusCode = 400; res.end('missing url'); return }
@@ -152,14 +150,14 @@ export default function coverProxyPlugin(): Plugin {
           return
         }
 
-        const headers = { ...BROWSER_HEADERS }
+        const headers: Record<string, string> = { ...BROWSER_HEADERS }
         if (target.hostname.endsWith('hdslb.com') || target.hostname.endsWith('bilibili.com')) { headers.Referer = 'https://www.bilibili.com/' }
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
         try {
           const upstream = await fetch(target.href, { headers, signal: controller.signal, redirect: 'follow' })
           if (!upstream.ok) { res.statusCode = upstream.status; res.end('upstream ' + upstream.status); return }
-          const buf = Buffer.from(await upstream.arrayBuffer())
+          const buf = new Uint8Array(await upstream.arrayBuffer())
           if (buf.length > MAX_BODY) { res.statusCode = 413; res.end('image too large'); return }
           // Cache the image
           imageCache.set(raw, buf)
@@ -171,24 +169,6 @@ export default function coverProxyPlugin(): Plugin {
           res.statusCode = 502
           res.end(err instanceof Error ? err.message : 'image proxy failed')
         } finally { clearTimeout(timer) }
-      })
-
-      // /__cover?url=...  ->  raw page body (legacy fallback, no cache)
-      server.middlewares.use('/__cover', async (req, res) => {
-        const reqUrl = new URL(req.url || '/', 'http://localhost')
-        const raw = reqUrl.searchParams.get('url')
-        if (!raw) { res.statusCode = 400; res.end('missing url'); return }
-        try {
-          const { status, contentType, text } = await fetchBody(raw)
-          res.statusCode = status
-          res.setHeader('Content-Type', contentType || 'text/plain')
-          res.setHeader('Access-Control-Allow-Origin', '*')
-          res.end(text)
-        } catch (err) {
-          res.statusCode = 502
- 
-          res.end(err instanceof Error ? err.message : 'proxy failed')
-        }
       })
     },
   }

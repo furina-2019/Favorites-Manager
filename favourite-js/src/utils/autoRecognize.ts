@@ -3,9 +3,9 @@
 // Title/category recognition is purely local and offline: it derives a title
 // and a category from the pasted text/link without any network request.
 //
-// Cover extraction is the ONLY network path: it delegates entirely to the
-// Vite dev-server plugin (/__cover/extract?url=...) which does the actual
-// fetch server-side with browser-like headers. No CORS proxies are used.
+// Cover extraction is the ONLY network path: it delegates to the server
+// (/api/extract-cover?url=...) which does the actual fetch with browser-like
+// headers. Works in both dev (Vite plugin) and production (Cloudflare Pages Functions).
 
 // Common file type mappings to categories
 const FILE_TYPE_CATEGORIES: Record<string, string> = {
@@ -243,7 +243,7 @@ function toHttps(url: string): string {
 }
 
 async function extractCoverViaBackend(url: string): Promise<string> {
-  const res = await fetch('/__cover/extract?url=' + encodeURIComponent(url), {
+  const res = await fetch('/api/extract-cover?url=' + encodeURIComponent(url), {
     signal: AbortSignal.timeout(12000),
   })
   if (!res.ok) throw new Error('backend cover failed: HTTP ' + res.status)
