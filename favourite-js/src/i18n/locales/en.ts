@@ -68,7 +68,18 @@ const en = {
   help_search_q: 'How do I search?',
   help_search_a: 'Type a keyword in the search box on the home page or the items page - it matches titles, links, categories and tags, and highlights the matched text.',
   help_cover_q: 'How do I auto-extract covers?',
-  help_cover_a: 'When adding a link item, click "Auto Recognize" to fill the title, category and fetch the cover from the page; you can also switch the cover to "Image URL" and click "Extract Cover". Extraction needs the local backend running (npm run server).',
+  help_cover_a: 'There are two ways to extract covers:
+
+Method 1: Auto Recognize
+1. Paste a link and click the "Auto Recognize" button
+2. The app will fill in the title, category, and extract the cover from the page
+
+Method 2: Manual Extract
+1. Switch the cover area to "Image URL" mode
+2. Paste or enter the target link
+3. Click "Extract Cover" — the app will fetch the cover from the page
+
+Supported sites: Bilibili, YouTube, GitHub, Medium, and more.',
   help_mindmap_q: 'How do I use the mind-map view?',
   help_mindmap_a: 'Switch to the mind-map view on the items page - the folder sits in the center and items spread outward. Drag with the left button to pan, use the controls on the top-right to zoom or fit the view, and click an item node to jump back to the list.',
   
@@ -238,7 +249,7 @@ const en = {
     extract_cover: 'Extract Cover',
     extract_cover_hint: 'Fetch the cover image from the link page metadata',
     cover_extracted: 'Cover extracted',
-    cover_extract_failed: 'Cover extraction failed - make sure the backend is running (npm run server), or the page cannot be reached / no cover was found',
+    cover_extract_failed: 'Cover extraction failed — the page could not be reached or no cover was found. Please try again later.',
     preset_cover: 'Preset Cover',
     // Preset covers
     preset_video: 'Video',
