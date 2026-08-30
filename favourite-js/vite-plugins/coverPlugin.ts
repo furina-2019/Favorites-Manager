@@ -23,13 +23,13 @@ function friendlyError(err: unknown): { status: number; message: string } {
     return { status: 503, message: err.message }
   }
   const msg = err instanceof Error ? err.message : String(err)
-  if (msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND')) {
+  if (msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND') || msg.includes('fetch failed') || msg.includes('connect')) {
     return { status: 502, message: '无法连接到目标服务器' }
   }
-  if (msg.includes('abort') || msg.includes('timeout')) {
+  if (msg.includes('abort') || msg.includes('timeout') || msg.includes('timed out')) {
     return { status: 504, message: '请求超时，请稍后重试' }
   }
-  if (msg.includes('body too large')) {
+  if (msg.includes('body too large') || msg.includes('response too large')) {
     return { status: 413, message: '响应内容过大' }
   }
   return { status: 502, message: msg || '封面提取失败' }

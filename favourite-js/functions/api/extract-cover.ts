@@ -30,15 +30,17 @@ function friendlyError(err: unknown): { status: number; message: string } {
     return { status: 503, message: err.message }
   }
   const msg = err instanceof Error ? err.message : String(err)
-  if (msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND')) {
+  if (msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND') || msg.includes('fetch failed') || msg.includes('connect')) {
     return { status: 502, message: '无法连接到目标服务器' }
   }
-  if (msg.includes('abort') || msg.includes('timeout')) {
+  if (msg.includes('abort') || msg.includes('timeout') || msg.includes('timed out')) {
     return { status: 504, message: '请求超时，请稍后重试' }
   }
-  if (msg.includes('body too large')) {
+  if (msg.includes('body too large') || msg.includes('response too large')) {
     return { status: 413, message: '响应内容过大' }
   }
+  // Log unexpected errors for debugging
+  console.error('[extract-cover] unexpected error:', err)
   return { status: 502, message: msg || '封面提取失败' }
 }
 
@@ -63,6 +65,7 @@ async function extractBilibiliCover(videoUrl: string): Promise<string> {
     }
   } catch (e) {
     if (e instanceof RateLimitError || e instanceof UpstreamBlockedError) throw e
+    console.warn('[extract-cover] bilibili API error:', e instanceof Error ? e.message : e)
   }
 
   // 2) Video page HTML
@@ -78,6 +81,7 @@ async function extractBilibiliCover(videoUrl: string): Promise<string> {
     }
   } catch (e) {
     if (e instanceof RateLimitError || e instanceof UpstreamBlockedError) throw e
+    console.warn('[extract-cover] bilibili page error:', e instanceof Error ? e.message : e)
   }
 
   // 3) Player API
@@ -94,6 +98,7 @@ async function extractBilibiliCover(videoUrl: string): Promise<string> {
     }
   } catch (e) {
     if (e instanceof RateLimitError || e instanceof UpstreamBlockedError) throw e
+    console.warn('[extract-cover] bilibili player API error:', e instanceof Error ? e.message : e)
   }
 
   throw new Error('no cover found for bilibili link')
@@ -136,10 +141,12 @@ export const onRequest: PagesFunction = async (context) => {
 
   try {
     const isBili = target.hostname.endsWith('bilibili.com')
+    console.log(`[extract-cover] ${isBili ? 'bilibili' : 'generic'} cover extraction for: ${target.hostname}`)
     const cover = isBili ? await extractBilibiliCover(raw) : await extractGenericCover(raw)
     return jsonResponse({ cover })
   } catch (err) {
     const { status, message } = friendlyError(err)
+    console.error(`[extract-cover] failed (${status}): ${message}`)
     return jsonResponse({ error: message }, status)
   }
 }

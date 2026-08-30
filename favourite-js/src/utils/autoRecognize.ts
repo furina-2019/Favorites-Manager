@@ -243,13 +243,38 @@ function toHttps(url: string): string {
 }
 
 async function extractCoverViaBackend(url: string): Promise<string> {
-  const res = await fetch('/api/extract-cover?url=' + encodeURIComponent(url), {
-    signal: AbortSignal.timeout(12000),
-  })
-  if (!res.ok) throw new Error('backend cover failed: HTTP ' + res.status)
-  const j = (await res.json()) as { cover?: string; error?: string }
-  if (typeof j.cover === 'string' && j.cover) return j.cover
-  throw new Error(j.error || 'backend returned no cover')
+  const MAX_RETRIES = 2
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff: 1s, 2s
+      await new Promise(r => setTimeout(r, 1000 * attempt))
+    }
+    try {
+      const res = await fetch('/api/extract-cover?url=' + encodeURIComponent(url), {
+        signal: AbortSignal.timeout(12000),
+      })
+      const j = (await res.json()) as { cover?: string; error?: string }
+      if (res.ok && typeof j.cover === 'string' && j.cover) return j.cover
+      // Don't retry client errors (4xx) — they're deterministic
+      if (res.status >= 400 && res.status < 500) {
+        throw new Error(j.error || 'backend cover failed: HTTP ' + res.status)
+      }
+      // 5xx — retryable
+      lastError = new Error(j.error || 'backend cover failed: HTTP ' + res.status)
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        lastError = new Error('封面提取超时，请稍后重试')
+      } else if (e instanceof Error) {
+        lastError = e
+      } else {
+        lastError = new Error('封面提取失败')
+      }
+      // Network errors are retryable
+    }
+  }
+  throw lastError || new Error('封面提取失败')
 }
 
 export async function extractCoverFromUrl(input: string): Promise<string> {
