@@ -526,7 +526,7 @@ export default function ItemDialog({
             }}
           >
             <Radio.Button value="local">{t('local_image')}</Radio.Button>
-            <Radio.Button value="url" disabled>{t('cover_by_url')}</Radio.Button>
+            <Radio.Button value="url">{t('cover_by_url')}</Radio.Button>
             <Radio.Button value="preset">{t('preset_cover')}</Radio.Button>
           </Radio.Group>
         </Form.Item>
